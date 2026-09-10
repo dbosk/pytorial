@@ -1,6 +1,6 @@
 [project]
 name = "pytorial"
-version = "0.8"
+version = "0.8.1"
 description = "Interactive command-line tutorials with PTY-backed steps"
 license = "MIT"
 readme = "README.md"
@@ -14,6 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
   "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
   "Intended Audience :: Education",
   "Topic :: Education"
 ]

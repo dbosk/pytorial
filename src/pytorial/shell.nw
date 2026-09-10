@@ -60,17 +60,13 @@ not need to capture an interactive transcript.
 from __future__ import annotations
 
 import errno
-import fcntl
 import os
-import pty
 import shlex
 import select
 import shutil
 import subprocess
 import sys
 import tempfile
-import termios
-import tty
 from contextlib import contextmanager
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -435,6 +431,63 @@ def test_run_editor_requires_tty(tmp_path, monkeypatch):
 @
 
 
+\section{Checking terminal support}
+
+On Windows, listing tutorials and running editor steps need no POSIX
+terminal modules.  Importing those modules only at their shell call sites
+keeps the package usable by a host CLI on either platform.  Both shell
+entry points check this capability before doing any setup or checking for
+a TTY: a Windows terminal can be a TTY while still lacking PTY support.
+
+<<import the POSIX terminal modules>>=
+import fcntl
+import pty
+import termios
+import tty
+<<functions>>=
+def require_posix_terminal() -> None:
+    """Explain how to run shell steps when POSIX support is unavailable."""
+    try:
+        <<import the POSIX terminal modules>>
+    except ImportError as error:
+        raise RuntimeError(POSIX_TERMINAL_HINT) from error
+<<constants>>=
+POSIX_TERMINAL_HINT = (
+    "Interactive tutorials need a POSIX terminal (pty, termios); "
+    "on Windows run them inside WSL."
+)
+@
+
+Blocking each import models an interpreter without these modules.  Both
+shell entry points must give the same actionable answer even without a
+TTY, while the editor's direct subprocess path remains available.
+
+<<test functions>>=
+@pytest.fixture
+def no_posix_terminal(monkeypatch):
+    for name in ("fcntl", "pty", "termios", "tty"):
+        monkeypatch.setitem(sys.modules, name, None)
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_shell_explains_missing_posix_support(
+    tmp_path, monkeypatch, no_posix_terminal, interactive,
+):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    with pytest.raises(RuntimeError, match="WSL"):
+        if interactive:
+            run_interactive_shell(workspace=tmp_path)
+        else:
+            run_scripted_shell("echo hello", workspace=tmp_path)
+
+
+def test_editor_works_without_posix_modules(
+    tmp_path, monkeypatch, no_posix_terminal,
+):
+    test_run_editor_reads_back_edited_file(tmp_path, monkeypatch)
+@
+
+
 \section{Claiming the PTY as a controlling terminal}
 
 Attaching bash to the slave side of a PTY is not quite enough for a real
@@ -455,6 +508,7 @@ slave by then.
 def prepare_child_terminal() -> None:
     """Turn the PTY slave on fd ``0`` into the controlling terminal."""
 
+    <<import the POSIX terminal modules>>
     os.setsid()
     if hasattr(termios, "TIOCSCTTY"):
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
@@ -516,6 +570,7 @@ def spawn_shell_process(
 ) -> tuple[int, subprocess.Popen]:
     """Start bash on a PTY and return the master fd and child process."""
 
+    <<import the POSIX terminal modules>>
     workspace_path = Path(workspace)
     master_fd, slave_fd = pty.openpty()
     try:
@@ -640,6 +695,7 @@ def run_scripted_shell(
 ) -> ShellResult:
     """Run ``commands`` in a PTY-backed shell and capture the transcript."""
 
+    require_posix_terminal()
     <<record scripted session start and choose shell context>>
     <<run scripted session inside shell context>>
 @
@@ -755,6 +811,7 @@ def test_run_scripted_shell_pre_command_shares_cwd_and_env(tmp_path):
 
 
 def test_spawn_shell_process_keeps_norc_without_rcfile(tmp_path, monkeypatch):
+    import pty
     captured = {}
 
     class DummyProcess:
@@ -886,6 +943,8 @@ def run_interactive_shell(
 ) -> ShellResult:
     """Open an interactive PTY-backed shell in ``workspace``."""
 
+    require_posix_terminal()
+    <<import the POSIX terminal modules>>
     <<require a real TTY for the interactive shell>>
     <<record interactive session start and choose shell context>>
     <<run interactive session inside shell context>>
