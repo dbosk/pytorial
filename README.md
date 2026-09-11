@@ -155,3 +155,6 @@ standalone-only `install` command.
 
 For the literate sources, the `make` build, and the repo layout, see
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+On Windows, shell tutorial steps need WSL; listing tutorials and editor steps
+remain available natively.

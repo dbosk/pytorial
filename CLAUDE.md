@@ -70,7 +70,9 @@ The package surface is intentionally narrow and re-exported from
   (appname `pytorial`; state and installed tutorials under the legacy
   `tutorial` appname are adopted — moved — on first use).
 - `shell.py` — `run_interactive_shell` / `run_scripted_shell`. PTY-backed
-  step execution; this is what makes the tutorials "interactive".
+  step execution; this is what makes the tutorials "interactive". POSIX
+  terminal modules are imported at use sites; shell entry points report a
+  WSL hint when unavailable, while catalog and editor paths work on Windows.
 - `run.py` — `TutorialRunner`, `RunResult`. Orchestrates one tutorial:
   iterates steps, invokes the shell/editor/select/input handler for each
   `step_kind`, gates author-supplied `pre_command` / `check_command` /
