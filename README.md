@@ -165,6 +165,8 @@ registered everywhere. Where no POSIX terminal is available,
 - `tutorial run` refuses a tutorial that has shell steps, or shell hooks
   that would execute, *before* it creates a run or workspace, and exits
   with status 1;
+- `tutorial list` shows `needs WSL` in place of the progress status for
+  each tutorial that `run` would refuse;
 - `tutorial list`, `tutorial review`, and tutorials made only of question
   and editor steps keep working.
 

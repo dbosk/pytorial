@@ -151,7 +151,27 @@ going to reject anyway are left to that gate, so its more specific
 message wins.  Tutorials made only of question and editor steps pass,
 which is what keeps such lessons usable natively.
 
+The question has two askers.  Running a tutorial needs a refusal, while
+listing tutorials (\cref{run-listing}) only needs to know whether there
+would be one.  We therefore compute the reasons in a function that
+raises nothing and keep the refusal as a thin layer over it, so the list
+can never disagree with what [[run]] will do.
+
 <<functions>>=
+def reasons_not_runnable_here(
+    tutorial: Tutorial,
+    *,
+    shell_runner: Callable[..., object],
+    allow_shell: bool,
+) -> tuple[str, ...]:
+    """Return why this platform cannot complete ``tutorial``, if anything."""
+
+    if posix_terminal_available():
+        return ()
+    <<collect the reasons [[tutorial]] cannot run here>>
+    return tuple(reasons)
+
+
 def require_runnable_here(
     tutorial: Tutorial,
     *,
@@ -160,9 +180,11 @@ def require_runnable_here(
 ) -> None:
     """Reject ``tutorial`` when this platform cannot complete it."""
 
-    if posix_terminal_available():
-        return
-    <<collect the reasons [[tutorial]] cannot run here>>
+    reasons = reasons_not_runnable_here(
+        tutorial,
+        shell_runner=shell_runner,
+        allow_shell=allow_shell,
+    )
     if reasons:
         raise RuntimeError(
             f"Tutorial {tutorial.id!r} has {' and '.join(reasons)}, "
@@ -600,6 +622,7 @@ def test_runner_keeps_store_and_backends(tmp_path):
 
 
 \subsection{Listing tutorials with progress}
+\label{run-listing}
 
 The list command needs the loaded tutorial definitions alongside the
 latest saved progress for each one.
@@ -627,6 +650,57 @@ def test_list_tutorials_returns_progress_entries(tmp_path):
 
     assert tutorial.id == "shell-basics"
     assert progress.completed_steps == 0
+@
+
+A listing should also be able to say which of those tutorials this
+platform cannot complete, so that a reader on native Windows does not
+have to find out by trying them one at a time.  The runner answers
+because it owns the shell backend that the answer depends on.  It
+deliberately ignores its own [[allow_shell]] setting and counts every
+hook: the listing has no [[--allow-shell]] flag, and a tutorial with
+hooks cannot be completed here either way --- the trust gate stops it
+without the flag and the platform stops it with the flag.
+
+<<tutorial runner methods>>=
+def cannot_run_here(self, tutorial: Tutorial) -> bool:
+    """Return whether this platform cannot complete ``tutorial``."""
+
+    return bool(
+        reasons_not_runnable_here(
+            tutorial,
+            shell_runner=self.shell_runner,
+            allow_shell=True,
+        )
+    )
+@
+
+<<test functions>>=
+def test_runner_knows_which_tutorials_cannot_run_here(
+    tmp_path, monkeypatch,
+):
+    tutorial_path = write_demo_tutorial(tmp_path)
+    runner = TutorialRunner(
+        StateStore(tmp_path / "state"),
+        TutorialCatalog((tutorial_path,)),
+    )
+    tutorial, _ = runner.list_tutorials()[0]
+    hooks_only = tutorial_with_steps(
+        TutorialStep(
+            title="Answer",
+            instructions="Say yes.",
+            kind="input",
+            answers=("yes",),
+            check_command="test -f answer.txt",
+        )
+    )
+
+    assert not runner.cannot_run_here(tutorial)
+
+    monkeypatch.setattr("pytorial.run.posix_terminal_available", lambda: False)
+
+    assert runner.cannot_run_here(tutorial)
+    assert runner.cannot_run_here(hooks_only)
+    assert not runner.cannot_run_here(tutorial_with_steps(QUESTION_STEP))
 @
 
 

@@ -89,6 +89,10 @@ The package surface is intentionally narrow and re-exported from
   is created) and refuses, with the WSL hint, a tutorial that has shell
   steps (for the PTY-backed backends) or hooks that would execute when no
   POSIX terminal is available — so no run or workspace is left behind.
+  It is a thin layer over the non-raising `reasons_not_runnable_here`;
+  `TutorialRunner.cannot_run_here` asks the same question for `list`,
+  which then shows `needs WSL` instead of the progress status (three
+  tab-separated fields either way; unchanged on POSIX).
 - `cli.py` — Typer app exposing `tutorial list / run / review / install`,
   plus `create_app`, `add_typer_subcommand`, `add_argparse_subcommand` so
   the CLI can be embedded as a subcommand inside another Typer or

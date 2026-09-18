@@ -1015,8 +1015,15 @@ import csv
 def render_tutorial_list(
     console: Console,
     tutorials: tuple[tuple["Tutorial", ProgressState], ...],
+    *,
+    cannot_run: Callable[["Tutorial"], bool] = lambda tutorial: False,
 ) -> None:
     """Render the tutorial list for terminals and scripts."""
+
+    def status(tutorial: "Tutorial", progress: ProgressState) -> str:
+        if cannot_run(tutorial):
+            return NEEDS_WSL_STATUS
+        return format_progress_status(progress)
 
     if console.is_terminal:
         <<import Rich's table>>
@@ -1027,7 +1034,7 @@ def render_tutorial_list(
         for tutorial, progress in tutorials:
             table.add_row(
                 tutorial.id,
-                format_progress_status(progress),
+                status(tutorial, progress),
                 tutorial.summary,
             )
         console.print(table)
@@ -1043,11 +1050,23 @@ def render_tutorial_list(
         writer.writerow(
             (
                 tutorial.id,
-                format_progress_status(progress),
+                status(tutorial, progress),
                 tutorial.summary,
             )
         )
+<<constants>>=
+NEEDS_WSL_STATUS = "needs WSL"
 @
+
+Where shell steps cannot run, the list is the place to say so: it is where
+a reader chooses what to run, and [[run]] would refuse those tutorials
+anyway.  The marker replaces the progress status instead of adding a
+column, because scripts parse the three tab-separated fields, and because
+no progress is lost: a tutorial that cannot run here has none.  The
+renderer takes the question as a predicate so that it stays a pure
+formatter; the commands pass the runner's [[cannot_run_here]], which is
+false for every tutorial on a POSIX system, so the output there is
+unchanged.
 
 <<test functions>>=
 def test_render_tutorial_list_writes_tabs_when_not_in_tty():
@@ -1121,6 +1140,47 @@ def test_render_tutorial_list_uses_rich_table_in_tty():
     assert "A short summary." in output
     assert "┏" not in output
     assert "│" not in output
+@
+
+Both forms must mark a tutorial that cannot run here, and only that one.
+We list the same tutorial twice and let the predicate pick one of them, so
+the test shows the marker replacing one status while its neighbour keeps
+its progress.
+
+<<test functions>>=
+@pytest.mark.parametrize("force_terminal", [False, True])
+def test_render_tutorial_list_marks_tutorials_that_cannot_run(force_terminal):
+    buffer = StringIO()
+    console = Console(
+        file=buffer,
+        width=80,
+        force_terminal=force_terminal,
+        color_system=None,
+    )
+    entries = tuple(
+        (
+            Tutorial(id=id, title=id, summary="A short summary.", steps=()),
+            ProgressState(
+                tutorial_id=id,
+                total_steps=3,
+                completed_steps=1,
+                finished=False,
+            ),
+        )
+        for id in ("needs-shell", "questions-only")
+    )
+
+    render_tutorial_list(
+        console,
+        entries,
+        cannot_run=lambda tutorial: tutorial.id == "needs-shell",
+    )
+
+    first, second = [
+        line for line in buffer.getvalue().splitlines() if "-" in line
+    ]
+    assert "needs WSL" in first and "1/3 complete" not in first
+    assert "1/3 complete" in second and "needs WSL" not in second
 @
 
 
@@ -2620,7 +2680,11 @@ def list_command(
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
 
-    render_tutorial_list(console, tutorial_runner.list_tutorials())
+    render_tutorial_list(
+        console,
+        tutorial_runner.list_tutorials(),
+        cannot_run=tutorial_runner.cannot_run_here,
+    )
 @
 
 The run command owns the most interactive path, so it only keeps the actual
@@ -3412,11 +3476,20 @@ def test_typer_run_refuses_shell_tutorial_without_a_posix_terminal(
     assert StateStore(tmp_path / "state").latest_run("shell-basics") is None
 
 
-def test_typer_list_works_without_a_posix_terminal(tmp_path, no_posix_terminal):
+def test_typer_list_marks_shell_tutorials_without_a_posix_terminal(
+    tmp_path, no_posix_terminal,
+):
     result = invoke_embedded_typer(tmp_path, ["tutorial", "list"])
 
     assert result.exit_code == 0
-    assert "shell-basics\t" in result.stdout
+    assert "shell-basics\tneeds WSL\t" in result.stdout
+
+
+def test_typer_list_shows_progress_with_a_posix_terminal(tmp_path):
+    result = invoke_embedded_typer(tmp_path, ["tutorial", "list"])
+
+    assert "shell-basics\t0/7 complete\t" in result.stdout
+    assert "WSL" not in result.stdout
 @
 
 
@@ -3707,6 +3780,17 @@ def test_argparse_run_refuses_shell_tutorial_without_a_posix_terminal(
     assert exit_code == 1
     assert "WSL" in "".join(capsys.readouterr())
     assert StateStore(tmp_path / "state").latest_run("shell-basics") is None
+
+
+def test_argparse_list_marks_shell_tutorials_without_a_posix_terminal(
+    tmp_path, capsys, no_posix_terminal,
+):
+    parser, _ = embedded_argparse_parser(tmp_path)
+
+    exit_code = run_argparse_command(parser.parse_args(["tutorial", "list"]))
+
+    assert exit_code == 0
+    assert "shell-basics\tneeds WSL\t" in capsys.readouterr().out
 @
 
 
@@ -3759,7 +3843,11 @@ def argparse_list_command(
         print(error)
         return 1
 
-    render_tutorial_list(make_console(), runner.list_tutorials())
+    render_tutorial_list(
+        make_console(),
+        runner.list_tutorials(),
+        cannot_run=runner.cannot_run_here,
+    )
     return 0
 @
 
