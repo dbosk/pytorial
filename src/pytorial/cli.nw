@@ -424,11 +424,31 @@ decision across the whole chapter.  Funnelling them through one helper
 keeps the console chunk in a single place, and leaves the call sites
 reading as ordinary calls.
 
+The helper is also where we turn off Rich's console markup.  By default
+Rich reads square brackets in a printed string as style tags, and almost
+everything this chapter interpolates into a line is chosen by someone
+else: the reader's current directory, an author's titles, summaries,
+options and file names, the text of a parse error.  A directory called
+[[proj[old]]] would be announced as [[proj]], which for the in-place notice
+means naming the wrong directory; one called [[rel[/final]]] would end the
+command with a [[MarkupError]], since it closes a tag that was never
+opened.  We never need the feature, because every styled line passes
+[[style=]] instead of writing tags.  Disabling it on the console rather
+than escaping each value at each call site means a print added later is
+safe without anyone remembering to escape.  Authored Markdown is
+unaffected: [[Markdown]] is a renderable with its own parser, not console
+markup.
+
 <<functions>>=
 def make_console(**options) -> Console:
-    """Return a Rich console, loading Rich on first use."""
+    """Return a Rich console that prints text literally.
+
+    Rich is loaded on first use.  Console markup is off unless the caller
+    passes `markup=True`, so square brackets in paths and titles survive.
+    """
 
     <<import Rich's console>>
+    options.setdefault("markup", False)
     return Console(**options)
 @
 
@@ -438,6 +458,29 @@ console it builds, rather than quietly constructing a default one:
 <<test functions>>=
 def test_make_console_passes_options_through():
     assert make_console(stderr=True).stderr is True
+@
+
+The two failure modes differ, so we test one path of each kind: an
+unknown tag, which Rich would drop silently, and a stray closing tag,
+which Rich would refuse to print at all.
+
+<<test functions>>=
+@pytest.mark.parametrize(
+    "workspace",
+    ["/tmp/proj[old]/docs", "/tmp/rel[/final]"],
+)
+def test_make_console_prints_square_brackets_literally(workspace):
+    buffer = StringIO()
+    console = make_console(
+        file=buffer,
+        width=80,
+        force_terminal=False,
+        color_system=None,
+    )
+
+    console.print(f"Workspace: {workspace}", style="dim")
+
+    assert f"Workspace: {workspace}\n" == buffer.getvalue()
 @
 
 
@@ -1176,6 +1219,43 @@ def test_render_tutorial_list_uses_rich_table_in_tty():
     assert "│" not in output
 @
 
+Table cells are printed strings too, so an author's summary reaches Rich
+the same way a path does.  With the console from [[make_console]] a
+summary that happens to contain brackets is listed as written:
+
+<<test functions>>=
+def test_render_tutorial_list_keeps_square_brackets_in_tty():
+    buffer = StringIO()
+    console = make_console(
+        file=buffer,
+        width=80,
+        force_terminal=True,
+        color_system=None,
+    )
+
+    render_tutorial_list(
+        console,
+        (
+            (
+                Tutorial(
+                    id="arrays",
+                    title="Arrays",
+                    summary="Arrays [part 1] [/x]",
+                    steps=(),
+                ),
+                ProgressState(
+                    tutorial_id="arrays",
+                    total_steps=3,
+                    completed_steps=0,
+                    finished=False,
+                ),
+            ),
+        ),
+    )
+
+    assert "Arrays [part 1] [/x]" in buffer.getvalue()
+@
+
 Both forms must mark a tutorial that cannot run here, and only that one.
 We list the same tutorial twice and let the predicate pick one of them, so
 the test shows the marker replacing one status while its neighbour keeps
@@ -1226,7 +1306,11 @@ student can distinguish one step's transcript from the next.
 Rich helps with the headings and spacing, but the transcript itself is
 not authored Markdown.  It may be shell output or saved file contents, so
 review must print it literally rather than treating square brackets or
-similar text as Rich markup.
+similar text as Rich markup.  Consoles from [[make_console]] already do
+that for every line, but this function accepts any console, and a
+transcript is the text most likely to contain brackets, so the transcript
+print says so itself; it also turns off Rich's highlighter, which would
+otherwise colour numbers and paths inside the recorded output.
 
 <<functions>>=
 def render_review_output(
@@ -3311,6 +3395,35 @@ def test_run_command_announces_the_current_directory_once(
     assert result.exit_code == 0
     assert result.stdout.count(IN_PLACE_RUN_NOTICE) == 1
     assert project.name in result.stdout
+    assert "Completed release" in result.stdout
+
+
+def test_run_command_survives_square_brackets_in_the_directory(
+    tmp_path, monkeypatch
+):
+    tutorial_path = write_in_place_tutorial(tmp_path)
+    project = tmp_path / "rel[" / "final]"
+    project.mkdir(parents=True)
+    monkeypatch.chdir(project)
+    commands = iter(["pwd\n", "echo tagged\n"])
+
+    def scripted_runner(*, workspace, prompt_name="pytorial"):
+        return run_scripted_shell(
+            next(commands),
+            workspace=workspace,
+            prompt_name=prompt_name,
+        )
+
+    result = CliRunner().invoke(
+        create_app(
+            state_root=tmp_path / "state",
+            shell_runner=scripted_runner,
+        ),
+        ["run", "--tutorial-path", str(tutorial_path), "release"],
+    )
+
+    assert result.exit_code == 0
+    assert "rel[/final]" in result.stdout.replace("\n", "")
     assert "Completed release" in result.stdout
 
 
