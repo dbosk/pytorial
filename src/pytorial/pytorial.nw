@@ -35,6 +35,7 @@ __all__ = [
     "create_app",
     "get_tutorial",
     "get_tutorials",
+    "posix_terminal_available",
     "run_interactive_shell",
     "run_scripted_shell",
 ]
@@ -70,6 +71,7 @@ from pytorial.model import TutorialRun
 from pytorial.model import TutorialStep
 from pytorial.run import RunResult
 from pytorial.run import TutorialRunner
+from pytorial.shell import posix_terminal_available
 from pytorial.shell import run_interactive_shell
 from pytorial.shell import run_scripted_shell
 from pytorial.state import ProgressState
@@ -90,6 +92,18 @@ def test_package_exports_cli_helpers():
     assert callable(create_app)
     assert callable(add_typer_subcommand)
     assert callable(add_argparse_subcommand)
+@
+
+The embedding helpers register the tutorial group on every platform and
+let its help text say where shell steps can run, so a host needs no
+platform logic of its own.  We still export the predicate behind that
+help text: a host that wants to word its own note, or to skip a
+tutorial-related hint elsewhere in its interface, should ask the same
+question the runner asks rather than inspect [[sys.platform]].
+
+<<test functions>>=
+def test_package_exports_platform_predicate():
+    assert posix_terminal_available() is True
 @
 
 

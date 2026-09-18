@@ -306,6 +306,7 @@ from pytorial.run import RunResult
 from pytorial.run import TutorialRunner
 from pytorial.run import validate_step
 from pytorial.shell import EditorResult
+from pytorial.shell import posix_terminal_available
 from pytorial.shell import run_editor
 from pytorial.shell import run_interactive_shell
 from pytorial.shell import ShellResult
@@ -2457,9 +2458,50 @@ finally the user-facing commands.
 
 <<create Typer application shell>>=
 application = typer.Typer(
-    help="Run interactive command-line tutorials.",
+    help=with_platform_note("Run interactive command-line tutorials."),
     invoke_without_command=True,
 )
+@
+
+\subsection{Saying where shell steps can run}
+\label{cli-platform-note}
+
+The group is registered on every platform, so a host application never
+has to ask where it is running before it mounts the tutorials.  The cost
+of that simplicity would be a Windows user who discovers the limitation
+only by starting a tutorial, so the help text carries the answer instead.
+The note appears exactly when the runner would refuse a tutorial with
+shell steps, because both ask [[posix_terminal_available]]; on a POSIX
+system the help is unchanged.  That predicate finds the terminal modules
+without importing them, which matters here: a host builds this
+application on every invocation, whether or not a tutorial command runs.
+
+<<functions>>=
+def with_platform_note(help_text: str) -> str:
+    """Return ``help_text``, pointing to WSL where shell steps cannot run."""
+
+    if posix_terminal_available():
+        return help_text
+    return f"{help_text} {PLATFORM_NOTE}"
+<<constants>>=
+PLATFORM_NOTE = (
+    "Shell steps need a POSIX terminal; on Windows, run this inside WSL."
+)
+@
+
+<<test functions>>=
+@pytest.fixture
+def no_posix_terminal(monkeypatch):
+    monkeypatch.setattr("pytorial.cli.posix_terminal_available", lambda: False)
+    monkeypatch.setattr("pytorial.run.posix_terminal_available", lambda: False)
+
+
+def test_help_is_unchanged_with_a_posix_terminal():
+    assert with_platform_note("Run tutorials.") == "Run tutorials."
+
+
+def test_help_points_to_wsl_without_a_posix_terminal(no_posix_terminal):
+    assert "WSL" in with_platform_note("Run tutorials.")
 @
 
 The help callback belongs close to the application shell because it changes the
@@ -2606,7 +2648,10 @@ RUN_ALLOW_SHELL_HELP = (
 @
 
 <<register run command>>=
-@application.command("run")
+@application.command(
+    "run",
+    help=with_platform_note("Run or resume one tutorial."),
+)
 def run_command(
     tutorial_id: str = typer.Argument(
         ...,
@@ -3323,6 +3368,57 @@ def test_add_typer_subcommand_honours_no_allow_shell_override(tmp_path):
     assert "Tutorial shell hooks and validation are disabled" in result.stderr
 @
 
+An embedded host registers the group on every platform
+(\cref{cli-platform-note}).  Against the same mounted tutorial we
+therefore contrast the two platforms: the help only names WSL where shell
+steps cannot run, and there [[run]] stops before any run is saved while
+[[list]] keeps working.
+
+<<test functions>>=
+def invoke_embedded_typer(tmp_path, arguments):
+    parent = typer.Typer()
+    add_typer_subcommand(
+        parent,
+        state_root=tmp_path / "state",
+        tutorial_paths=(write_demo_tutorial(tmp_path),),
+    )
+    return CliRunner().invoke(parent, arguments)
+
+
+def test_typer_help_omits_wsl_with_a_posix_terminal(tmp_path):
+    result = invoke_embedded_typer(tmp_path, ["tutorial", "--help"])
+
+    assert result.exit_code == 0
+    assert "WSL" not in result.stdout
+
+
+@pytest.mark.parametrize("arguments", [["--help"], ["tutorial", "--help"]])
+def test_typer_help_points_to_wsl_without_a_posix_terminal(
+    tmp_path, no_posix_terminal, arguments,
+):
+    result = invoke_embedded_typer(tmp_path, arguments)
+
+    assert result.exit_code == 0
+    assert "WSL" in result.stdout
+
+
+def test_typer_run_refuses_shell_tutorial_without_a_posix_terminal(
+    tmp_path, no_posix_terminal,
+):
+    result = invoke_embedded_typer(tmp_path, ["tutorial", "run", "shell-basics"])
+
+    assert result.exit_code == 1
+    assert "WSL" in result.stderr
+    assert StateStore(tmp_path / "state").latest_run("shell-basics") is None
+
+
+def test_typer_list_works_without_a_posix_terminal(tmp_path, no_posix_terminal):
+    result = invoke_embedded_typer(tmp_path, ["tutorial", "list"])
+
+    assert result.exit_code == 0
+    assert "shell-basics\t" in result.stdout
+@
+
 
 \section{Embedding in an argparse application}
 
@@ -3361,7 +3457,12 @@ def add_argparse_subcommand(
     """
 
     <<import the argparse toolkit>>
-    parser = subparsers.add_parser(name, help="Run interactive tutorials")
+    group_help = with_platform_note("Run interactive tutorials.")
+    parser = subparsers.add_parser(
+        name,
+        help=group_help,
+        description=group_help,
+    )
     tutorial_subparsers = parser.add_subparsers(dest="tutorial_command")
     tutorial_subparsers.required = True
 
@@ -3401,7 +3502,10 @@ def add_argparse_subcommand(
         )
     )
 
-    run_parser = tutorial_subparsers.add_parser("run", help="Run a tutorial")
+    run_parser = tutorial_subparsers.add_parser(
+        "run",
+        help=with_platform_note("Run a tutorial."),
+    )
     run_parser.add_argument(
         "--tutorial-path",
         action="append",
@@ -3555,6 +3659,54 @@ def test_add_argparse_subcommand_honours_no_allow_shell_override(
 
     assert exit_code == 1
     assert "Tutorial shell hooks and validation are disabled" in captured.out
+@
+
+
+Argparse shows a subparser's [[help]] in the host's command list and its
+[[description]] in the group's own [[--help]], so the platform note goes
+into both.  The refusal itself needs no argparse-specific code: the
+runner's [[RuntimeError]] takes the same path as every other run error.
+
+<<test functions>>=
+def embedded_argparse_parser(tmp_path):
+    parser = argparse.ArgumentParser(prog="host")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.required = True
+    group = add_argparse_subcommand(
+        subparsers,
+        state_root=tmp_path / "state",
+        tutorial_paths=(write_demo_tutorial(tmp_path),),
+    )
+    return parser, group
+
+
+def test_argparse_help_omits_wsl_with_a_posix_terminal(tmp_path):
+    parser, group = embedded_argparse_parser(tmp_path)
+
+    assert "WSL" not in parser.format_help()
+    assert "WSL" not in group.format_help()
+
+
+def test_argparse_help_points_to_wsl_without_a_posix_terminal(
+    tmp_path, no_posix_terminal,
+):
+    parser, group = embedded_argparse_parser(tmp_path)
+
+    assert "WSL" in parser.format_help()
+    assert "WSL" in group.format_help()
+
+
+def test_argparse_run_refuses_shell_tutorial_without_a_posix_terminal(
+    tmp_path, capsys, no_posix_terminal,
+):
+    parser, _ = embedded_argparse_parser(tmp_path)
+
+    args = parser.parse_args(["tutorial", "run", "shell-basics"])
+    exit_code = run_argparse_command(args)
+
+    assert exit_code == 1
+    assert "WSL" in "".join(capsys.readouterr())
+    assert StateStore(tmp_path / "state").latest_run("shell-basics") is None
 @
 
 

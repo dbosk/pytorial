@@ -71,14 +71,24 @@ The package surface is intentionally narrow and re-exported from
   `tutorial` appname are adopted — moved — on first use).
 - `shell.py` — `run_interactive_shell` / `run_scripted_shell`. PTY-backed
   step execution; this is what makes the tutorials "interactive". POSIX
-  terminal modules are imported at use sites; shell entry points report a
-  WSL hint when unavailable, while catalog and editor paths work on Windows.
+  terminal modules are imported at use sites. `posix_terminal_available()`
+  answers "can shell steps run here?" with `importlib.util.find_spec`, i.e.
+  without importing `pty`/`termios` (it runs on every host invocation via
+  the help text); shell entry points raise a WSL hint when it is false,
+  while catalog, question and editor paths work on Windows. Tests simulate
+  Windows by setting those modules to `None` in `sys.modules` (shell) or by
+  monkeypatching the predicate in the importing module (run, cli) — there
+  is no `sys.platform` check anywhere.
 - `run.py` — `TutorialRunner`, `RunResult`. Orchestrates one tutorial:
   iterates steps, invokes the shell/editor/select/input handler for each
   `step_kind`, gates author-supplied `pre_command` / `check_command` /
   `post_command` behind `--allow-shell`, and writes transcripts via the
   state store. Standalone `tutorial run` defaults that flag off, while
   embedded CLI helpers default it on for trusted bundled tutorials.
+  `require_runnable_here` runs before `select_run` (the only place a run
+  is created) and refuses, with the WSL hint, a tutorial that has shell
+  steps (for the PTY-backed backends) or hooks that would execute when no
+  POSIX terminal is available — so no run or workspace is left behind.
 - `cli.py` — Typer app exposing `tutorial list / run / review / install`,
   plus `create_app`, `add_typer_subcommand`, `add_argparse_subcommand` so
   the CLI can be embedded as a subcommand inside another Typer or
@@ -91,7 +101,9 @@ The package surface is intentionally narrow and re-exported from
 Embedded hosts (`add_typer_subcommand` / `add_argparse_subcommand`)
 prepend the `using-tutorials` lesson before host-specific tutorials, do
 not load the user's installed tutorial directory, and hide the
-standalone-only `install` command.
+standalone-only `install` command. The subcommand is registered on every
+platform so hosts need no platform logic; `with_platform_note` appends
+the WSL pointer to the group and `run` help where shell steps cannot run.
 
 ## Tutorial format (authoring)
 

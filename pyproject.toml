@@ -1,6 +1,6 @@
 [project]
 name = "pytorial"
-version = "0.8.1"
+version = "0.9.0"
 description = "Interactive command-line tutorials with PTY-backed steps"
 license = "MIT"
 readme = "README.md"
