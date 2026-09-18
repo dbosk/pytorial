@@ -332,6 +332,7 @@ import typer
 
 from pytorial.model import runs_in_place
 from pytorial.model import step_kind
+from pytorial.model import Tutorial
 from pytorial.model import TutorialStep
 from pytorial.run import perform_step
 from pytorial.run import recorded_text
@@ -339,6 +340,7 @@ from pytorial.run import require_allow_shell
 from pytorial.run import RunResult
 from pytorial.run import TutorialRunner
 from pytorial.run import validate_step
+from pytorial.run import workspace_for_run
 from pytorial.shell import EditorResult
 from pytorial.shell import posix_terminal_available
 from pytorial.shell import run_editor
@@ -444,7 +446,7 @@ def make_console(**options) -> Console:
     """Return a Rich console that prints text literally.
 
     Rich is loaded on first use.  Console markup is off unless the caller
-    passes `markup=True`, so square brackets in paths and titles survive.
+    passes ``markup=True``, so square brackets in paths and titles survive.
     """
 
     <<import Rich's console>>
@@ -1856,15 +1858,23 @@ since they never left the directory in between.  The notice is printed
 the same way [[render_step_prompt]] prints its workspace line, so the
 two mentions of the directory look alike.
 
+The notice takes the directory rather than a run.  It only ever needed
+the path, and [[develop]] must make the same announcement without having
+a run at all, since it bypasses the state store.
+
 <<constants>>=
 IN_PLACE_RUN_NOTICE = "This tutorial runs in your current directory:"
 <<functions>>=
-def render_in_place_notice(console: Console, tutorial, run) -> None:
+def render_in_place_notice(
+    console: Console,
+    tutorial: Tutorial,
+    workspace: str | Path,
+) -> None:
     """Announce that ``tutorial`` runs in the reader's own directory."""
 
     if not runs_in_place(tutorial):
         return
-    console.print(f"{IN_PLACE_RUN_NOTICE} {run.workspace}", style="bold")
+    console.print(f"{IN_PLACE_RUN_NOTICE} {workspace}", style="bold")
 @
 
 <<functions>>=
@@ -1881,7 +1891,7 @@ def make_run_step_renderer(
         nonlocal announced
         if not announced:
             announced = True
-            render_in_place_notice(console, tutorial, run)
+            render_in_place_notice(console, tutorial, run.workspace)
         render_step_for_run(
             console=console,
             tutorial=tutorial,
@@ -4446,15 +4456,34 @@ def test_argparse_run_command_handles_question_steps(
 \section{Develop: an authoring loop for one step}
 
 The [[develop]] command is the only command that exists purely to support
-authoring tutorials.  Its job is to let the author iterate on a single step
-in a fresh workspace, see whether the runner agrees with their intent, and
-fix the step source whenever the verdict is wrong.
+authoring tutorials.  Its job is to let the author iterate on a single step,
+see whether the runner agrees with their intent, and fix the step source
+whenever the verdict is wrong.
 
 It deliberately bypasses the persistence layer.  Saved runs and resume
 state would only get in the way: the author is changing the step itself,
-so each iteration is a clean slate.  The loop reuses
+so no iteration should inherit progress from the last.  The loop reuses
 [[perform_step]], [[recorded_text]], and [[validate_step]] so the verdict
 develop reports is the verdict [[run]] would give end users.
+
+That promise decides where the step runs.  A step of a sandboxed tutorial
+runs in a temporary directory, as it would in a reader's fresh workspace.
+A step of an in-place tutorial ([[workspace: cwd]]) usually inspects the
+project around it---is there a [[pyproject.toml]], is the tree clean---so
+in an empty directory it could only ever fail, and the verdict would say
+nothing about the step.  Develop therefore runs it in the current
+directory, exactly where [[run]] would, and asks [[workspace_for_run]]
+rather than restating that rule.  The author pays for this honestly: the
+directory is not reset between iterations, and develop trusts shell hooks
+by default, so they act on real files just as [[run --allow-shell]] does.
+We make the same single-line announcement [[run]] makes and, like it, do
+not ask for confirmation.
+
+One directory stays temporary whatever the tutorial says: the scratch
+directory that holds [[step.md]], the copy of the step source the author
+edits when a verdict is wrong.  It is develop's own working file, not part
+of any step, and writing it into the workspace would drop it into---or
+over a file in---the author's project.
 
 \subsection{Resolving an existing step}
 
@@ -4673,8 +4702,10 @@ Inside the loop we reuse [[runner]]-equivalent wiring (shell, editor and
 question runners from the closure) directly, since the develop loop is
 allowed to ignore the persistence layer the runner factory threads in.
 
-Authoring is also the one command that needs a scratch workspace, so it
-carries the last of the deferred imports.
+Authoring is also the one command that needs a scratch directory, so it
+carries the last of the deferred imports.  The directory always holds the
+step source being edited; it doubles as the workspace unless the tutorial
+runs in place.
 
 <<import the temporary directory helper>>=
 import tempfile
@@ -4764,9 +4795,10 @@ def develop_command(
     its saved progress is scoped to that directory.
 
     \b
-    develop always uses a temporary workspace, even for a cwd tutorial.
-    Test an in-place tutorial with `tutorial run --restart` inside a
-    scratch copy of a real project.
+    develop runs a step of a cwd tutorial in your current directory, like
+    `tutorial run`, and says so first; nothing is reset between iterations,
+    so iterate inside a scratch copy of a real project. New steps and steps
+    of fresh tutorials run in a temporary workspace.
 
     \b
     YAML tip: use `|` for multi-line shell hooks; `>` would fold newlines.
@@ -4781,17 +4813,17 @@ def develop_command(
         )
 
     <<import the temporary directory helper>>
-    with tempfile.TemporaryDirectory(prefix="pytorial-develop-") as workspace:
-        workspace_path = Path(workspace)
+    with tempfile.TemporaryDirectory(prefix="pytorial-develop-") as scratch:
+        scratch_path = Path(scratch)
 
         try:
-            current_step = resolve_initial_develop_step(
+            current_step, tutorial = resolve_initial_develop_step(
                 console=console,
                 tutorial_id=tutorial_id,
                 step_locator=step,
                 tutorial_path_arg=tutorial_path or [],
                 editor_runner=editor_runner,
-                workspace=workspace_path,
+                scratch=scratch_path,
             )
         except ValueError as error:
             typer.echo(str(error), err=True)
@@ -4812,11 +4844,16 @@ def develop_command(
             question_runner=question_runner,
         )
 
+        workspace_path = develop_workspace(tutorial, scratch_path)
+        if tutorial is not None:
+            render_in_place_notice(console, tutorial, workspace_path)
+
         final_step = develop_iterate(
             console=console,
             initial_step=current_step,
             tutorial_id=tutorial_id or "develop",
             workspace=workspace_path,
+            scratch=scratch_path,
             shell_runner=shell_runner,
             editor_runner=editor_runner,
             question_runner=command_question_runner,
@@ -4838,6 +4875,11 @@ it lives in its own helper.  New-step mode delegates to
 [[edit_step_in_editor]]; existing-step mode looks the tutorial up via the
 catalog using the same path resolution as [[list]]/[[run]]/[[review]].
 
+The helper hands back the tutorial along with the step.  The step alone
+is enough to run and validate, but where it must run is a property of the
+tutorial's front matter, which a [[TutorialStep]] does not carry.  A new
+step belongs to no tutorial yet, so there is none to return.
+
 <<functions>>=
 def resolve_initial_develop_step(
     *,
@@ -4846,25 +4888,70 @@ def resolve_initial_develop_step(
     step_locator: str | None,
     tutorial_path_arg: list[Path],
     editor_runner: Callable[..., EditorResult],
-    workspace: Path,
-) -> TutorialStep | None:
-    """Return the step the develop loop should start with."""
+    scratch: Path,
+) -> tuple[TutorialStep | None, Tutorial | None]:
+    """Return the step the develop loop starts with, and its tutorial.
+
+    The tutorial is ``None`` when the author drafts a new step.
+    """
 
     if tutorial_id is None:
-        return edit_step_in_editor(
+        new_step = edit_step_in_editor(
             console=console,
-            workspace=workspace,
+            workspace=scratch,
             relative_path="step.md",
             initial_text=DEVELOP_NEW_STEP_TEMPLATE,
             editor_runner=editor_runner,
             confirm=lambda prompt: typer.confirm(prompt, default=True),
         )
+        return new_step, None
 
     catalog_paths = list(standalone_tutorial_paths())
     catalog_paths.extend(tutorial_path_arg)
     catalog = TutorialCatalog(tuple(catalog_paths))
     tutorial = catalog.get_tutorial(tutorial_id)
-    return parse_step_locator(step_locator or "", tutorial.steps)
+    return parse_step_locator(step_locator or "", tutorial.steps), tutorial
+@
+
+
+\subsection{Choosing where the step runs}
+
+[[workspace_for_run]] already answers \enquote{must this tutorial use a
+particular directory?} for the runner, which falls back to a workspace
+allocated by the state store when the answer is no.  Develop asks the
+same question and falls back to its scratch directory instead, since it
+has no store.  A new step has no tutorial and so nothing that could ask
+for the current directory.
+
+<<functions>>=
+def develop_workspace(tutorial: Tutorial | None, scratch: Path) -> Path:
+    """Return the directory ``develop`` runs a step of ``tutorial`` in."""
+
+    if tutorial is None:
+        return scratch
+    return workspace_for_run(tutorial) or scratch
+@
+
+Let's verify all three cases; only an in-place tutorial leaves the
+scratch directory.
+
+<<test functions>>=
+def test_develop_workspace_is_the_current_directory_only_in_place(
+    tmp_path, monkeypatch
+):
+    steps = (TutorialStep(title="One", instructions="Do it."),)
+    fresh = Tutorial(id="t", title="T", summary="S", steps=steps)
+    in_place = Tutorial(
+        id="t", title="T", summary="S", steps=steps, workspace="cwd",
+    )
+    project = tmp_path / "project"
+    scratch = tmp_path / "scratch"
+    project.mkdir()
+    monkeypatch.chdir(project)
+
+    assert develop_workspace(None, scratch) == scratch
+    assert develop_workspace(fresh, scratch) == scratch
+    assert develop_workspace(in_place, scratch) == project.resolve()
 @
 
 
@@ -4876,6 +4963,10 @@ to the editor when it was wrong, and decide whether to go round again.
 Splitting it out of the command callback keeps the registration body
 easy to scan and gives tests a smaller surface to target.
 
+The loop takes two directories because they play different roles.  The
+step runs, and is validated, in [[workspace]], which may be the author's
+project.  The step source is re-edited in [[scratch]], which never is.
+
 <<functions>>=
 def develop_iterate(
     *,
@@ -4883,6 +4974,7 @@ def develop_iterate(
     initial_step: TutorialStep,
     tutorial_id: str,
     workspace: Path,
+    scratch: Path,
     shell_runner: Callable[..., ShellResult],
     editor_runner: Callable[..., EditorResult],
     question_runner: Callable[..., ShellResult],
@@ -4941,7 +5033,7 @@ def develop_iterate(
         if not correct:
             edited = edit_step_in_editor(
                 console=console,
-                workspace=workspace,
+                workspace=scratch,
                 relative_path="step.md",
                 initial_text=compose_develop_edit_text(
                     step, recorded=recorded, verdict=verdict,
@@ -5251,4 +5343,188 @@ def test_develop_command_visible_in_standalone_help(tmp_path):
 
     assert result.exit_code == 0
     assert "develop" in result.stdout
+@
+
+
+\subsection{Develop tests for in-place tutorials}
+
+These tests stand in a project directory and record which directory each
+runner is handed, because that is the whole behaviour: the shell must see
+the project, and the editor holding [[step.md]] must not.  The first one
+goes round the loop twice, so it also shows that the announcement belongs
+to the invocation, not to the iteration.
+
+<<test functions>>=
+def _develop_shell_recorder(seen: list, transcript: str):
+    """Return a shell runner that records its workspace in ``seen``."""
+
+    def fake_shell_runner(*, workspace, prompt_name=None):
+        seen.append(Path(workspace))
+        return ShellResult(
+            started_at="2026-01-01T00:00:00+00:00",
+            ended_at="2026-01-01T00:00:01+00:00",
+            exit_status=0,
+            transcript=transcript,
+        )
+
+    return fake_shell_runner
+
+
+def test_develop_command_runs_in_place_tutorials_in_the_current_directory(
+    monkeypatch, tmp_path,
+):
+    _develop_no_user_tutorials(monkeypatch, tmp_path)
+    tutorial_path = write_in_place_tutorial(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    workspaces = []
+
+    result = CliRunner().invoke(
+        create_standalone_app(
+            state_root=tmp_path / "state",
+            shell_runner=_develop_shell_recorder(workspaces, "$ pwd\n/x\n"),
+        ),
+        ["develop", "release", "1", "--tutorial-path", str(tutorial_path)],
+        input="y\ny\ny\nn\n",
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert workspaces == [project.resolve(), project.resolve()]
+    assert result.stdout.count(IN_PLACE_RUN_NOTICE) == 1
+    assert result.stdout.count("Verdict: PASS") == 2
+@
+
+Re-editing is where a single shared directory would have done damage, so
+we let the editor stub write its file, as a real editor would, and then
+look for it in the project.
+
+<<test functions>>=
+def test_develop_command_keeps_the_step_source_out_of_the_project(
+    monkeypatch, tmp_path,
+):
+    _develop_no_user_tutorials(monkeypatch, tmp_path)
+    tutorial_path = write_in_place_tutorial(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "step.md").write_text("the author's own file\n")
+    monkeypatch.chdir(project)
+    editor_workspaces = []
+    revised_text = "# Check the tree (revised)\n\nRun `pwd`.\n"
+
+    def fake_editor_runner(*, workspace, relative_path, initial_text=None):
+        editor_workspaces.append(Path(workspace))
+        Path(workspace, relative_path).write_text(revised_text)
+        return EditorResult(
+            started_at="2026-01-01T00:00:00+00:00",
+            ended_at="2026-01-01T00:00:01+00:00",
+            exit_status=0,
+            file_path=str(Path(workspace) / relative_path),
+            text=revised_text,
+        )
+
+    result = CliRunner().invoke(
+        create_standalone_app(
+            state_root=tmp_path / "state",
+            shell_runner=_develop_shell_recorder([], "$ pwd\n/x\n"),
+            editor_runner=fake_editor_runner,
+        ),
+        ["develop", "release", "1", "--tutorial-path", str(tutorial_path)],
+        input="n\nn\n",
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "# Check the tree (revised)" in result.stdout
+    assert len(editor_workspaces) == 1
+    assert editor_workspaces[0] != project.resolve()
+    assert (project / "step.md").read_text() == "the author's own file\n"
+@
+
+Finally, the two cases that must not change.  A sandboxed tutorial and a
+newly drafted step both run outside the directory the author stands in,
+and neither is announced.
+
+<<test functions>>=
+def test_develop_command_keeps_fresh_tutorials_in_a_temporary_workspace(
+    monkeypatch, tmp_path,
+):
+    _develop_no_user_tutorials(monkeypatch, tmp_path)
+    tutorial_path = _write_develop_demo(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    workspaces = []
+
+    result = CliRunner().invoke(
+        create_standalone_app(
+            state_root=tmp_path / "state",
+            shell_runner=_develop_shell_recorder(
+                workspaces, "$ pwd\n/tmp\n$ ls\nnotes.txt\n",
+            ),
+        ),
+        [
+            "develop",
+            "develop-demo",
+            "1",
+            "--tutorial-path",
+            str(tutorial_path),
+        ],
+        input="y\nn\n",
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Verdict: PASS" in result.stdout
+    assert IN_PLACE_RUN_NOTICE not in result.stdout
+    assert len(workspaces) == 1
+    assert workspaces[0] != project.resolve()
+    assert list(project.iterdir()) == []
+
+
+def test_develop_command_drafts_new_steps_in_a_temporary_workspace(
+    monkeypatch, tmp_path,
+):
+    _develop_no_user_tutorials(monkeypatch, tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    workspaces = []
+    drafted_text = (
+        "# Drafted step\n"
+        "\n"
+        "```tutorial-step\n"
+        "required_patterns:\n"
+        "  - hello\n"
+        "```\n"
+        "\n"
+        "Type hello.\n"
+    )
+
+    def fake_editor_runner(*, workspace, relative_path, initial_text=None):
+        Path(workspace, relative_path).write_text(drafted_text)
+        return EditorResult(
+            started_at="2026-01-01T00:00:00+00:00",
+            ended_at="2026-01-01T00:00:01+00:00",
+            exit_status=0,
+            file_path=str(Path(workspace) / relative_path),
+            text=drafted_text,
+        )
+
+    result = CliRunner().invoke(
+        create_standalone_app(
+            state_root=tmp_path / "state",
+            shell_runner=_develop_shell_recorder(
+                workspaces, "$ echo hello\nhello\n",
+            ),
+            editor_runner=fake_editor_runner,
+        ),
+        ["develop"],
+        input="y\nn\n",
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Verdict: PASS" in result.stdout
+    assert IN_PLACE_RUN_NOTICE not in result.stdout
+    assert len(workspaces) == 1
+    assert workspaces[0] != project.resolve()
+    assert list(project.iterdir()) == []
 @
