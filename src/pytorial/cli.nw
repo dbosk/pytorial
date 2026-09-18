@@ -54,6 +54,7 @@ from pytorial.model import TextMatch
 from pytorial.model import Tutorial
 from pytorial.model import TutorialRun
 from pytorial.model import TutorialStep
+from pytorial.run import transcript_matches_patterns
 from pytorial.shell import EditorResult
 from pytorial.shell import run_scripted_shell
 from pytorial.state import StateStore
@@ -3763,8 +3764,41 @@ def test_add_typer_subcommand_prepends_universal_tutorial(tmp_path):
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     assert lines[0].startswith("using-tutorials\t")
     assert any(line.startswith("shell-basics\t") for line in lines[1:])
+@
 
+Mounting the universal lesson first is only a kindness if a learner in
+the host can finish it.  Its first step validates the output of
+[[tutorial list]], and that output is exactly what embedding changes: a
+host's listing has [[using-tutorials]] and the host's own tutorials, but
+not the other built-ins.  The step once required those built-ins, so the
+first lesson of every host stopped at step one.  We replay that scenario
+with a host that mounts a single tutorial, and feed its real listing to
+the matcher the runner uses.  The command line carries a host name in
+front of [[tutorial]], as it would in a host's shell.
 
+<<test functions>>=
+def test_universal_tutorial_first_step_passes_on_an_embedded_listing(tmp_path):
+    parent = typer.Typer()
+    add_typer_subcommand(
+        parent,
+        state_root=tmp_path / "state",
+        tutorial_paths=(write_demo_tutorial(tmp_path),),
+    )
+    listing = CliRunner().invoke(parent, ["tutorial", "list"]).stdout
+    first_step = (
+        TutorialCatalog((universal_tutorial_path(),))
+        .get_tutorial("using-tutorials")
+        .steps[0]
+    )
+
+    assert "writing-tutorials" not in listing
+    assert transcript_matches_patterns(
+        "using-tutorials $ host tutorial list\n" + listing,
+        first_step.required_patterns,
+    )
+@
+
+<<test functions>>=
 def test_add_typer_subcommand_ignores_user_installed_tutorials(
     monkeypatch,
     tmp_path,
