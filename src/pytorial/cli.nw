@@ -58,6 +58,8 @@ from pytorial.shell import EditorResult
 from pytorial.shell import run_scripted_shell
 from pytorial.state import StateStore
 
+<<borrowed test fixtures>>
+
 <<test functions>>
 @
 
@@ -109,34 +111,23 @@ def write_hook_tutorial(root_dir: str | Path) -> Path:
 
 The in-place command tests need a tutorial whose front matter asks for
 the reader's directory.  Two shell steps let a test prove the notice is
-printed once per invocation rather than once per step.
+printed once per invocation rather than once per step.  The runner's
+tests need exactly that tutorial too, and \cref{tutorial-run} already
+defines and explains it, so we borrow its [[write_in_place_tutorial]]
+instead of keeping a second copy that nothing would hold equal to the
+first.  A test module importing from another is unusual; here it follows
+the direction the package already depends in, since [[cli.py]] imports
+[[run.py]], and it works because pytest puts the directory of a test
+file that has no [[__init__.py]] beside it on [[sys.path]].
 
-<<test functions>>=
-def write_in_place_tutorial(root_dir: str | Path) -> Path:
-    """Write a two-step tutorial that runs in the caller's directory."""
+The other helpers that both chapters name stay separate on purpose.
+Each chapter's [[write_demo_tutorial]] assembles its sample from that
+chapter's own chunks, so the chapter can explain its own fixture, and
+each [[no_posix_terminal]] patches the predicate in the module under
+test.
 
-    tutorial_path = Path(root_dir) / "release.md"
-    tutorial_path.write_text(
-        "---\n"
-        "id: release\n"
-        "title: Release\n"
-        "summary: Scaffold a release in the project you are standing in.\n"
-        "workspace: cwd\n"
-        "---\n\n"
-        "# Check the tree\n\n"
-        "```tutorial-step\n"
-        "required_patterns:\n"
-        "  - pwd\n"
-        "```\n\n"
-        "Run `pwd`.\n\n"
-        "# Tag the release\n\n"
-        "```tutorial-step\n"
-        "required_patterns:\n"
-        "  - echo tagged\n"
-        "```\n\n"
-        "Run `echo tagged`.\n"
-    )
-    return tutorial_path
+<<borrowed test fixtures>>=
+from test_run import write_in_place_tutorial
 @
 
 We start with one small tutorial identity that is stable across every CLI test.
