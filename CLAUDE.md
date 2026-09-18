@@ -157,6 +157,13 @@ Repo-local example: `tutorials/shell-basics.md`.
   `Annotated` and standard-library annotations. `tests/unit/test_import_cost.py`
   (from `<<test [[import_cost.py]]>>` in `pytorial.nw`) enforces all of
   this by probing a fresh subprocess.
+- A test fixture that two chapters need is defined once, in the lower
+  layer's chapter, and imported by the other test file through a
+  `<<borrowed test fixtures>>` chunk (`test_cli.py` takes
+  `write_in_place_tutorial` from `test_run.py`). This relies on pytest's
+  default `prepend` import mode and on `tests/unit/` having no
+  `__init__.py`. Same-named helpers that differ per chapter on purpose
+  (`write_demo_tutorial`, `no_posix_terminal`) stay separate.
 - Black target version is `py310`.
 - Bumping the package version: edit `version` in `pyproject.toml`; the
   top-level `Makefile` reads it for `gh release create`.
