@@ -2212,6 +2212,27 @@ def blocked_step_number(result: RunResult) -> int:
     return result.progress.completed_steps + 1
 @
 
+A blocked step is named to the reader twice, on purpose and on different
+streams.  The menu below opens with it as a heading: that is part of the
+interactive surface, so it goes to standard output, styled like the other
+headings.  If the reader then chooses to stop, [[emit_run_summary]]
+reports it again as the outcome of a command that did not succeed: a
+plain diagnostic on standard error, followed by a non-zero exit status,
+which is what a calling script or a shell pipeline expects.  Sending both
+to one stream would break one of the two roles, so we share only what
+must not drift, the wording.
+
+<<constants>>=
+BLOCKED_STEP_PREFIX = "Step not complete yet:"
+<<functions>>=
+def blocked_step_message(result: RunResult) -> str:
+    """Return the line naming the step that ``result`` is blocked on."""
+
+    if result.blocked_step is None:
+        raise ValueError("A blocked-step message requires a blocked step.")
+    return f"{BLOCKED_STEP_PREFIX} {result.blocked_step.title}"
+@
+
 <<functions>>=
 def handle_blocked_step(
     result: RunResult,
@@ -2225,7 +2246,7 @@ def handle_blocked_step(
         raise ValueError("Blocked-step handling requires a blocked step.")
 
     console.print()
-    console.print(f"Step not complete yet: {result.blocked_step.title}", style="bold")
+    console.print(blocked_step_message(result), style="bold")
 
     while True:
         action = prompt_for_blocked_step_action(console, prompt_for_input)
@@ -3574,10 +3595,7 @@ def emit_run_summary(result: RunResult) -> None:
         return
 
     if result.blocked_step is not None:
-        typer.echo(
-            f"Step not complete yet: {result.blocked_step.title}",
-            err=True,
-        )
+        typer.echo(blocked_step_message(result), err=True)
         if result.blocked_step.hint:
             render_hint(make_console(stderr=True), result.blocked_step.hint)
         raise typer.Exit(code=1)
@@ -3609,6 +3627,44 @@ def test_emit_run_summary_reports_completed_tutorial(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "Completed shell-basics" in captured.out
+@
+
+The blocked branch is the command's failure report, so it must behave
+like one: the message from [[blocked_step_message]] on standard error,
+nothing on standard output, and an exit status a script can test.  The
+blocked step here has no hint, which keeps Rich out of this test.
+
+<<test functions>>=
+def test_emit_run_summary_reports_blocked_step_as_an_error(capsys, tmp_path):
+    tutorial_path = write_demo_tutorial(tmp_path)
+    tutorial = TutorialCatalog((tutorial_path,)).get_tutorial("shell-basics")
+    run = StateStore(tmp_path / "state").start_run(tutorial)
+    blocked = TutorialStep(
+        title="Inspect the workspace",
+        instructions="Run pwd.",
+    )
+    result = RunResult(
+        tutorial=tutorial,
+        run=run,
+        progress=ProgressState(
+            tutorial_id=tutorial.id,
+            total_steps=len(tutorial.steps),
+            completed_steps=0,
+            finished=False,
+        ),
+        executed_steps=1,
+        blocked_step=blocked,
+    )
+
+    with pytest.raises(typer.Exit) as raised:
+        emit_run_summary(result)
+
+    captured = capsys.readouterr()
+    assert raised.value.exit_code == 1
+    assert captured.err == f"{blocked_step_message(result)}\n"
+    assert captured.err.startswith(BLOCKED_STEP_PREFIX)
+    assert blocked.title in captured.err
+    assert captured.out == ""
 @
 
 
