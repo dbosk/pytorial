@@ -18,6 +18,8 @@ compile:
 test: compile
 	${MAKE} -C tests test
 
+# Only doc/Makefile knows what the PDF depends on, so always ask it.
+.PHONY: doc/pytorial.pdf
 doc/pytorial.pdf:
 	${MAKE} -C $(dir $@) $(notdir $@)
 
