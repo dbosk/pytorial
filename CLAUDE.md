@@ -68,7 +68,9 @@ The package surface is intentionally narrow and re-exported from
 - `state.py` — `StateStore` / `ProgressState`. Persists per-tutorial run
   progress and transcripts under `platformdirs` user state directory
   (appname `pytorial`; state and installed tutorials under the legacy
-  `tutorial` appname are adopted — moved — on first use).
+  `tutorial` appname are adopted — moved — on first use). `start_run` /
+  `latest_run` take an optional explicit workspace; the store never reads
+  the process cwd itself.
 - `shell.py` — `run_interactive_shell` / `run_scripted_shell`. PTY-backed
   step execution; this is what makes the tutorials "interactive". POSIX
   terminal modules are imported at use sites. `posix_terminal_available()`
@@ -93,6 +95,9 @@ The package surface is intentionally narrow and re-exported from
   `TutorialRunner.cannot_run_here` asks the same question for `list`,
   which then shows `needs WSL` instead of the progress status (three
   tab-separated fields either way; unchanged on POSIX).
+  `workspace_for_run` / `current_run` implement per-directory runs for
+  `workspace: cwd` tutorials (resume, `list`, `progress` are scoped to
+  the cwd; `review` is not).
 - `cli.py` — Typer app exposing `tutorial list / run / review / install`,
   plus `create_app`, `add_typer_subcommand`, `add_argparse_subcommand` so
   the CLI can be embedded as a subcommand inside another Typer or
@@ -100,7 +105,13 @@ The package surface is intentionally narrow and re-exported from
   kept as an alias; the embedded subcommand default name stays
   `tutorial`. User-facing command examples (README, lessons, CLI
   messages) use the `tutorial` alias, because that spelling is the same
-  standalone and embedded.
+  standalone and embedded. `make_console` builds every console with Rich
+  markup off, so interpolated paths and titles containing `[` print
+  literally; style with `style=`, never with markup tags. The
+  standalone-only `develop` command bypasses the state store; it runs a
+  step of a `workspace: cwd` tutorial in the cwd (via `workspace_for_run`)
+  but always keeps the step source it edits (`step.md`) in a separate
+  temporary scratch directory.
 
 Embedded hosts (`add_typer_subcommand` / `add_argparse_subcommand`)
 prepend the `using-tutorials` lesson before host-specific tutorials, do
@@ -112,8 +123,11 @@ the WSL pointer to the group and `run` help where shell steps cannot run.
 ## Tutorial format (authoring)
 
 A tutorial is a single Markdown file with YAML front matter
-(`id`, `title`, `summary` required). Each top-level `# Heading` becomes
-one step. A step may begin with a fenced ```` ```tutorial-step ```` YAML
+(`id`, `title`, `summary` required; optional `workspace: fresh|cwd`,
+where `cwd` runs the steps in the directory the reader launched from and
+scopes run selection, `list`, and `progress` to that directory). Each
+top-level `# Heading` becomes one step. A step may begin with a fenced
+```` ```tutorial-step ```` YAML
 block; recognised fields are `required_patterns`, `pre_command`,
 `check_command`, `post_command`, `hint`, `edit_file`, `kind`, `options`,
 `answers`. `pre_command` / `check_command` / `post_command` only execute

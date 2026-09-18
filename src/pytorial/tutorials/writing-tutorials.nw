@@ -16,7 +16,9 @@ authoring features compose.  We bootstrap (directory, file, load),
 then vary matching modes ([[contains]] vs two flavours of regex),
 then introduce the editor backend, then the three question
 [[kind]]s, then [[check_command]], and only then do we exercise the
-result by running and developing it.  Each cluster generalises the
+result by running it.  Only once the learner has watched a run use a
+sandbox do we vary where the tutorial runs at all, before closing with
+[[develop]] and a final inspection.  Each cluster generalises the
 previous one without invalidating it.
 
 \section{Tutorial source}
@@ -64,6 +66,8 @@ summary: Create a tutorial file, add shell, editor, and question steps, and load
 <<test the tutorial step>>
 
 <<contrast no-allow-shell step>>
+
+<<run in current directory step>>
 
 <<develop step>>
 
@@ -779,11 +783,78 @@ running `tutorial run` inside that host sees the success path of step
 15 without adding any flag.
 @
 
-\section{Step 17: Iterate on one step with [[tutorial develop]]}
+\section{Step 17: Run it in your current directory}
+
+Every step so far has varied what happens \emph{inside} a step.  This
+one varies where the steps happen at all, and it is the first
+front-matter change since step~2---which is why the required patterns
+keep the [[summary]] line: the check is not only that [[workspace: cwd]]
+appeared, but that the original fields survived, so the learner reads
+the edit as \emph{adding} a key rather than replacing a block.
+
+The contrast is deliberately deferred to here.  In step~15 the learner
+watched a nested run open a shell in a directory the tool had created
+for that run; only against that experience can \enquote{it runs where
+you stand} be discerned as a difference rather than absorbed as a rule.
+The prose therefore names the two purposes rather than the two values:
+[[fresh]] is for practice, where breaking things must be free; [[cwd]]
+is for scaffolding a workflow that must touch a real project but happens
+too rarely to remember.
+
+Per-directory progress is stated rather than left to be discovered,
+because it is the consequence authors get wrong: two projects being
+scaffolded at once must not share one run, and [[list]] showing no
+progress in a directory where nothing has started is correct, not a
+bug.  The step stays an editor step like every other authoring step in
+the cluster.  The notice line it describes becomes observable in the next
+step, where [[develop]] runs the converted tutorial; demanding another
+nested run here would vary two aspects at once.
+
+<<run in current directory step>>=
+# Run it in your current directory
+
+```tutorial-step
+edit_file: my-tutorials/greeting.md
+required_patterns:
+  - "summary: A tiny tutorial for saying hello."
+  - "workspace: cwd"
+hint: "Add one optional front-matter key below `summary`; every field and every step below the front matter stays exactly as it is."
+```
+
+Open `my-tutorials/greeting.md` and add one front-matter key:
+
+```md
+---
+id: greeting
+title: Greeting Tutorial
+summary: A tiny tutorial for saying hello.
+workspace: cwd
+---
+```
+
+Everything below the front matter stays as it is.
+
+In step 15 the nested run opened its shell in a workspace the tool had
+created for that run. With `workspace: cwd`, the same steps run in the
+directory you started `tutorial run` from, and the CLI prints one line
+naming that directory before the first step.
+
+Use `fresh` (the default) when the reader should practise in a sandbox.
+Use `cwd` to scaffold a workflow you perform in a real project but
+rarely enough to want the steps in front of you: cutting a release,
+bootstrapping a repository, rotating a key.
+
+Because the work happens in a real directory, progress is tracked per
+directory. Resuming, `--restart`, and `list` all look at the run
+recorded in the directory you are standing in, so scaffolding the same
+workflow in two projects gives you two independent runs.
+@
+
+\section{Step 18: Iterate on one step with [[tutorial develop]]}
 
 [[tutorial develop]] is the authoring counterpart to [[tutorial run]]:
-it exercises one step in a temporary workspace, prints a verdict, and
-asks whether to iterate.  We introduce it after the learner has run
+it exercises one step, prints a verdict, and asks whether to iterate.
+We introduce it after the learner has run
 the authored tutorial because [[develop]] only makes sense once a
 learner has felt the friction of restarting a whole tutorial just to
 re-test one step.  The required patterns include the literal
@@ -796,6 +867,19 @@ this is the inverse default of \emph{standalone} [[run]] (embedded
 hosts already default to allow, matching develop), and the asymmetry
 between develop and the standalone CLI authors actually use to test
 their tutorials is the kind that bites people who do not know about it.
+
+The previous step left [[greeting]] as a [[workspace: cwd]] tutorial, so
+here [[develop]] runs its step in the lesson's own workspace and prints
+the in-place notice.  Step~17 described that line without showing it; this
+is where the learner first sees it, and sees that it comes from
+[[develop]] as well as [[run]]: where a tutorial runs belongs to the
+tutorial, not to the command that runs it.
+We point the learner at the line rather than requiring it as a pattern,
+because the notice is folded at the terminal width and the path it ends
+with differs on every machine.  The closing advice changes with it: the
+old caveat was that [[develop]] could not test an in-place tutorial at
+all; the one that remains is that nothing resets the directory between
+iterations.
 
 <<develop step>>=
 # Iterate on one step with `tutorial develop`
@@ -814,26 +898,33 @@ Use `develop` on step `1` with `--tutorial-path my-tutorials greeting`.
 For this step:
 
 1. Start `develop` for step `1` with `--tutorial-path my-tutorials greeting`.
-2. When the temporary `greeting $ ` shell opens, type `exit` immediately.
+2. When the nested `greeting $ ` shell opens, type `exit` immediately.
 3. Answer yes when `develop` asks whether the `FAIL` verdict is correct.
 4. Answer no when it asks whether to run the step again.
 
-`develop` exercises one authored step in a temporary workspace, prints
-`PASS` or `FAIL`, and lets you edit and re-run that step without
-restarting the whole tutorial. We point at step `1` by number here,
-but the same command also accepts a regex that matches the step title.
-Develop also enables shell code by default; pass `--no-allow-shell` to
-turn it off for one session.
+`develop` exercises one authored step, prints `PASS` or `FAIL`, and lets
+you edit and re-run that step without restarting the whole tutorial. We
+point at step `1` by number here, but the same command also accepts a
+regex that matches the step title. Develop also enables shell code by
+default; pass `--no-allow-shell` to turn it off for one session.
+
+Watch for the line `This tutorial runs in your current directory:` before
+the step. That is the notice the previous step described: you made
+`greeting` a `workspace: cwd` tutorial, so `develop` runs its step right
+here, as `run` would, instead of in a temporary workspace. Nothing is
+reset between iterations, so when you develop an
+in-place tutorial of your own, do it inside a scratch copy of a real
+project.
 @
 
-\section{Step 18: Inspect the finished tutorial}
+\section{Step 19: Inspect the finished tutorial}
 
 The closing step is the variation-theory \emph{fusion} move at the
 tutorial level: a single [[required_patterns]] block enumerates the
 distinctive markers of every feature the learner has added in
 sequence (regex pattern, three [[kind]] values, an [[edit_file]], the
-[[pre_command]], the [[check_command]], the [[post_command]], and an output-
-anchored regex).  Validating against
+[[pre_command]], the [[check_command]], the [[post_command]], the
+[[workspace]] key, and an output-anchored regex).  Validating against
 all of them simultaneously proves the file accumulated correctly,
 without any earlier feature getting clobbered.  Pairing
 [[tutorial list --tutorial-path my-tutorials]] with
@@ -860,6 +951,7 @@ required_patterns:
   - 'check_command: test "$(cat hello.txt)" = "hello from the editor"'
   - "post_command: rm -f setup/target.txt"
   - "    pattern: (?i)hello(?:\\s+)?$"
+  - "workspace: cwd"
 hint: "Two views of the same artefact: what the catalog sees, and what is on disk."
 ```
 
