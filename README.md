@@ -144,9 +144,11 @@ workspace: cwd
 - `--restart` does not clear the directory, so files left by an earlier
   run are still there. Prefer non-destructive `post_command` cleanup in
   these tutorials.
-- `tutorial develop` always uses a temporary workspace. Test an in-place
-  tutorial with `tutorial run --restart` inside a scratch copy of a
-  project.
+- `tutorial develop` runs a step of such a tutorial in your current
+  directory too, and prints the same line first. Nothing is reset
+  between iterations, so develop an in-place tutorial inside a scratch
+  copy of a project. (The step source you edit along the way stays in a
+  temporary directory, never in your project.)
 
 ### Share and install
 

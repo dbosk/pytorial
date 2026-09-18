@@ -806,9 +806,9 @@ because it is the consequence authors get wrong: two projects being
 scaffolded at once must not share one run, and [[list]] showing no
 progress in a directory where nothing has started is correct, not a
 bug.  The step stays an editor step like every other authoring step in
-the cluster.  The notice line it describes becomes observable in the
-next run the learner starts; demanding another nested run here would
-vary two aspects at once.
+the cluster.  The notice line it describes becomes observable in the next
+step, where [[develop]] runs the converted tutorial; demanding another
+nested run here would vary two aspects at once.
 
 <<run in current directory step>>=
 # Run it in your current directory
@@ -853,8 +853,8 @@ workflow in two projects gives you two independent runs.
 \section{Step 18: Iterate on one step with [[tutorial develop]]}
 
 [[tutorial develop]] is the authoring counterpart to [[tutorial run]]:
-it exercises one step in a temporary workspace, prints a verdict, and
-asks whether to iterate.  We introduce it after the learner has run
+it exercises one step, prints a verdict, and asks whether to iterate.
+We introduce it after the learner has run
 the authored tutorial because [[develop]] only makes sense once a
 learner has felt the friction of restarting a whole tutorial just to
 re-test one step.  The required patterns include the literal
@@ -867,6 +867,19 @@ this is the inverse default of \emph{standalone} [[run]] (embedded
 hosts already default to allow, matching develop), and the asymmetry
 between develop and the standalone CLI authors actually use to test
 their tutorials is the kind that bites people who do not know about it.
+
+The previous step left [[greeting]] as a [[workspace: cwd]] tutorial, so
+here [[develop]] runs its step in the lesson's own workspace and prints
+the in-place notice.  Step~17 described that line without showing it; this
+is where the learner first sees it, and sees that it comes from
+[[develop]] as well as [[run]]: where a tutorial runs belongs to the
+tutorial, not to the command that runs it.
+We point the learner at the line rather than requiring it as a pattern,
+because the notice is folded at the terminal width and the path it ends
+with differs on every machine.  The closing advice changes with it: the
+old caveat was that [[develop]] could not test an in-place tutorial at
+all; the one that remains is that nothing resets the directory between
+iterations.
 
 <<develop step>>=
 # Iterate on one step with `tutorial develop`
@@ -885,18 +898,23 @@ Use `develop` on step `1` with `--tutorial-path my-tutorials greeting`.
 For this step:
 
 1. Start `develop` for step `1` with `--tutorial-path my-tutorials greeting`.
-2. When the temporary `greeting $ ` shell opens, type `exit` immediately.
+2. When the nested `greeting $ ` shell opens, type `exit` immediately.
 3. Answer yes when `develop` asks whether the `FAIL` verdict is correct.
 4. Answer no when it asks whether to run the step again.
 
-`develop` exercises one authored step in a temporary workspace, prints
-`PASS` or `FAIL`, and lets you edit and re-run that step without
-restarting the whole tutorial. We point at step `1` by number here,
-but the same command also accepts a regex that matches the step title.
-Develop also enables shell code by default; pass `--no-allow-shell` to
-turn it off for one session. It keeps using a temporary workspace even
-for a `workspace: cwd` tutorial, so test an in-place tutorial with
-`tutorial run --restart` inside a scratch copy of a real project.
+`develop` exercises one authored step, prints `PASS` or `FAIL`, and lets
+you edit and re-run that step without restarting the whole tutorial. We
+point at step `1` by number here, but the same command also accepts a
+regex that matches the step title. Develop also enables shell code by
+default; pass `--no-allow-shell` to turn it off for one session.
+
+Watch for the line `This tutorial runs in your current directory:` before
+the step. That is the notice the previous step described: you made
+`greeting` a `workspace: cwd` tutorial, so `develop` runs its step right
+here, as `run` would, instead of in a temporary workspace. Nothing is
+reset between iterations, so when you develop an
+in-place tutorial of your own, do it inside a scratch copy of a real
+project.
 @
 
 \section{Step 19: Inspect the finished tutorial}

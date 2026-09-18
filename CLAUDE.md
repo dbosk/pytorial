@@ -105,7 +105,13 @@ The package surface is intentionally narrow and re-exported from
   kept as an alias; the embedded subcommand default name stays
   `tutorial`. User-facing command examples (README, lessons, CLI
   messages) use the `tutorial` alias, because that spelling is the same
-  standalone and embedded.
+  standalone and embedded. `make_console` builds every console with Rich
+  markup off, so interpolated paths and titles containing `[` print
+  literally; style with `style=`, never with markup tags. The
+  standalone-only `develop` command bypasses the state store; it runs a
+  step of a `workspace: cwd` tutorial in the cwd (via `workspace_for_run`)
+  but always keeps the step source it edits (`step.md`) in a separate
+  temporary scratch directory.
 
 Embedded hosts (`add_typer_subcommand` / `add_argparse_subcommand`)
 prepend the `using-tutorials` lesson before host-specific tutorials, do
