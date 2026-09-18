@@ -75,6 +75,8 @@ from pytorial.model import step_kind
 from pytorial.shell import EditorResult
 from pytorial.shell import run_editor
 from pytorial.shell import ShellResult
+from pytorial.shell import needs_posix_terminal
+from pytorial.shell import posix_terminal_available
 from pytorial.shell import run_interactive_shell
 from pytorial.state import ProgressState
 from pytorial.state import StateStore
@@ -125,6 +127,175 @@ def test_require_allow_shell_rejects_pre_command_without_opt_in():
                 pre_command="export READY=prepared",
             ),
         )
+@
+
+
+\section{Refusing tutorials that cannot run here}
+\label{run-preflight}
+
+Native Windows has neither a POSIX terminal nor [[/bin/bash]], so shell
+steps and tutorial-authored shell code cannot run there.  The shell entry
+points already say so, but only once a shell step starts.  By then the
+runner has persisted a run and a workspace, and the learner may have
+worked through earlier question or editor steps only to reach a step they
+can never pass.  We therefore ask the question once, for the whole
+tutorial, before a run exists.  Unlike the trust gate above, which a
+reader can lift with a flag, nothing the reader does natively changes
+this answer, so checking all steps up front loses nothing.
+
+A tutorial is refused for either of two reasons.  The first is a shell
+step, but only while the shell backend is one of the PTY-backed ones:
+an injected backend has taken over the question of where it can run.
+The second is shell code that will actually execute, which always goes
+through bash regardless of the backend.  Hooks that the trust gate is
+going to reject anyway are left to that gate, so its more specific
+message wins.  Tutorials made only of question and editor steps pass,
+which is what keeps such lessons usable natively.
+
+The question has two askers.  Running a tutorial needs a refusal, while
+listing tutorials (\cref{run-listing}) only needs to know whether there
+would be one.  We therefore compute the reasons in a function that
+raises nothing and keep the refusal as a thin layer over it, so the list
+can never disagree with what [[run]] will do.
+
+<<functions>>=
+def reasons_not_runnable_here(
+    tutorial: Tutorial,
+    *,
+    shell_runner: Callable[..., object],
+    allow_shell: bool,
+) -> tuple[str, ...]:
+    """Return why this platform cannot complete ``tutorial``, if anything."""
+
+    if posix_terminal_available():
+        return ()
+    <<collect the reasons [[tutorial]] cannot run here>>
+    return tuple(reasons)
+
+
+def require_runnable_here(
+    tutorial: Tutorial,
+    *,
+    shell_runner: Callable[..., object],
+    allow_shell: bool,
+) -> None:
+    """Reject ``tutorial`` when this platform cannot complete it."""
+
+    reasons = reasons_not_runnable_here(
+        tutorial,
+        shell_runner=shell_runner,
+        allow_shell=allow_shell,
+    )
+    if reasons:
+        raise RuntimeError(
+            f"Tutorial {tutorial.id!r} has {' and '.join(reasons)}, "
+            "which cannot run here; " + POSIX_ENVIRONMENT_HINT
+        )
+<<constants>>=
+POSIX_ENVIRONMENT_HINT = (
+    "they need a POSIX terminal and bash. On Windows, run the tutorial "
+    "inside WSL."
+)
+<<collect the reasons [[tutorial]] cannot run here>>=
+reasons = []
+if needs_posix_terminal(shell_runner) and any(
+    step_kind(step) == "shell" for step in tutorial.steps
+):
+    reasons.append("shell steps")
+if allow_shell and any(
+    command is not None
+    for step in tutorial.steps
+    for command in (step.pre_command, step.check_command, step.post_command)
+):
+    reasons.append("shell hooks")
+@
+
+The tests replace the predicate rather than hiding the terminal modules,
+because the runner only cares about the answer.  They vary one aspect at
+a time against a refused shell step: the platform, the backend, and the
+kind of step.
+
+<<test functions>>=
+@pytest.fixture
+def no_posix_terminal(monkeypatch):
+    monkeypatch.setattr("pytorial.run.posix_terminal_available", lambda: False)
+
+
+def tutorial_with_steps(*steps: TutorialStep) -> Tutorial:
+    return Tutorial(id="demo", title="Demo", summary="A demo.", steps=steps)
+
+
+SHELL_STEP = TutorialStep(title="Inspect", instructions="Run `pwd`.")
+QUESTION_STEP = TutorialStep(
+    title="Answer", instructions="Say yes.", kind="input", answers=("yes",),
+)
+
+
+def test_shell_steps_are_runnable_with_a_posix_terminal():
+    require_runnable_here(
+        tutorial_with_steps(SHELL_STEP),
+        shell_runner=run_interactive_shell,
+        allow_shell=False,
+    )
+
+
+def test_shell_steps_are_refused_without_a_posix_terminal(no_posix_terminal):
+    with pytest.raises(RuntimeError, match="'demo' has shell steps.*WSL"):
+        require_runnable_here(
+            tutorial_with_steps(QUESTION_STEP, SHELL_STEP),
+            shell_runner=run_interactive_shell,
+            allow_shell=False,
+        )
+
+
+def test_injected_shell_backend_is_not_refused(no_posix_terminal):
+    require_runnable_here(
+        tutorial_with_steps(SHELL_STEP),
+        shell_runner=lambda **kwargs: None,
+        allow_shell=False,
+    )
+
+
+def test_question_steps_are_runnable_without_a_posix_terminal(
+    no_posix_terminal,
+):
+    require_runnable_here(
+        tutorial_with_steps(QUESTION_STEP),
+        shell_runner=run_interactive_shell,
+        allow_shell=True,
+    )
+@
+
+Hooks only count when they would execute.  With the trust gate closed,
+the tutorial passes this check and the gate explains itself at the step.
+
+<<test functions>>=
+@pytest.mark.parametrize("allow_shell", [False, True])
+def test_trusted_shell_hooks_are_refused_without_a_posix_terminal(
+    no_posix_terminal, allow_shell,
+):
+    tutorial = tutorial_with_steps(
+        TutorialStep(
+            title="Answer",
+            instructions="Say yes.",
+            kind="input",
+            answers=("yes",),
+            check_command="test -f answer.txt",
+        )
+    )
+
+    def check():
+        require_runnable_here(
+            tutorial,
+            shell_runner=run_interactive_shell,
+            allow_shell=allow_shell,
+        )
+
+    if allow_shell:
+        with pytest.raises(RuntimeError, match="shell hooks.*WSL"):
+            check()
+    else:
+        check()
 @
 
 
@@ -587,6 +758,7 @@ def current_run(self, tutorial: Tutorial) -> TutorialRun | None:
 
 
 \subsection{Listing tutorials with progress}
+\label{run-listing}
 
 The list command needs the loaded tutorial definitions alongside the
 latest saved progress for each one.
@@ -637,6 +809,57 @@ def test_list_tutorials_scopes_in_place_progress_by_directory(
     assert progress_a.completed_steps == 2
     assert progress_b.completed_steps == 0
     assert progress_b.run_id is None
+@
+
+A listing should also be able to say which of those tutorials this
+platform cannot complete, so that a reader on native Windows does not
+have to find out by trying them one at a time.  The runner answers
+because it owns the shell backend that the answer depends on.  It
+deliberately ignores its own [[allow_shell]] setting and counts every
+hook: the listing has no [[--allow-shell]] flag, and a tutorial with
+hooks cannot be completed here either way --- the trust gate stops it
+without the flag and the platform stops it with the flag.
+
+<<tutorial runner methods>>=
+def cannot_run_here(self, tutorial: Tutorial) -> bool:
+    """Return whether this platform cannot complete ``tutorial``."""
+
+    return bool(
+        reasons_not_runnable_here(
+            tutorial,
+            shell_runner=self.shell_runner,
+            allow_shell=True,
+        )
+    )
+@
+
+<<test functions>>=
+def test_runner_knows_which_tutorials_cannot_run_here(
+    tmp_path, monkeypatch,
+):
+    tutorial_path = write_demo_tutorial(tmp_path)
+    runner = TutorialRunner(
+        StateStore(tmp_path / "state"),
+        TutorialCatalog((tutorial_path,)),
+    )
+    tutorial, _ = runner.list_tutorials()[0]
+    hooks_only = tutorial_with_steps(
+        TutorialStep(
+            title="Answer",
+            instructions="Say yes.",
+            kind="input",
+            answers=("yes",),
+            check_command="test -f answer.txt",
+        )
+    )
+
+    assert not runner.cannot_run_here(tutorial)
+
+    monkeypatch.setattr("pytorial.run.posix_terminal_available", lambda: False)
+
+    assert runner.cannot_run_here(tutorial)
+    assert runner.cannot_run_here(hooks_only)
+    assert not runner.cannot_run_here(tutorial_with_steps(QUESTION_STEP))
 @
 
 
@@ -728,12 +951,32 @@ def run(
 
 Resolving the tutorial and current run is a policy decision: before we can
 talk about step execution, we must know whether we are resuming work or starting
-fresh.
+fresh.  The platform check from \cref{run-preflight} sits between the two
+lookups because [[select_run]] is the only place that creates a run:
+refusing before it means a tutorial that cannot run here leaves no run and
+no workspace behind.
 
 <<load tutorial and choose run>>=
 tutorial = self.catalog.get_tutorial(tutorial_id)
+require_runnable_here(
+    tutorial,
+    shell_runner=self.shell_runner,
+    allow_shell=self.allow_shell,
+)
 run, restarted, already_finished = self.select_run(tutorial, restart=restart)
 progress = self.store.progress_for(tutorial, run)
+@
+
+<<test functions>>=
+def test_runner_refuses_before_creating_a_run(tmp_path, no_posix_terminal):
+    tutorial_path = write_demo_tutorial(tmp_path)
+    store = StateStore(tmp_path / "state")
+    runner = TutorialRunner(store, TutorialCatalog((tutorial_path,)))
+
+    with pytest.raises(RuntimeError, match="WSL"):
+        runner.run("shell-basics")
+
+    assert store.latest_run("shell-basics") is None
 @
 
 If the tutorial is already complete, opening another shell would only repeat a

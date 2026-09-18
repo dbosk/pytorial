@@ -35,6 +35,7 @@ __all__ = [
     "create_app",
     "get_tutorial",
     "get_tutorials",
+    "posix_terminal_available",
     "run_interactive_shell",
     "run_scripted_shell",
 ]
@@ -70,6 +71,7 @@ from pytorial.model import TutorialRun
 from pytorial.model import TutorialStep
 from pytorial.run import RunResult
 from pytorial.run import TutorialRunner
+from pytorial.shell import posix_terminal_available
 from pytorial.shell import run_interactive_shell
 from pytorial.shell import run_scripted_shell
 from pytorial.state import ProgressState
@@ -90,6 +92,18 @@ def test_package_exports_cli_helpers():
     assert callable(create_app)
     assert callable(add_typer_subcommand)
     assert callable(add_argparse_subcommand)
+@
+
+The embedding helpers register the tutorial group on every platform and
+let its help text say where shell steps can run, so a host needs no
+platform logic of its own.  We still export the predicate behind that
+help text: a host that wants to word its own note, or to skip a
+tutorial-related hint elsewhere in its interface, should ask the same
+question the runner asks rather than inspect [[sys.platform]].
+
+<<test functions>>=
+def test_package_exports_platform_predicate():
+    assert posix_terminal_available() is True
 @
 
 
@@ -148,7 +162,7 @@ def imported_module_names(statement):
     probe = (
         f"{statement}\n"
         "import sys\n"
-        "loaded = sorted(sys.modules)\n"
+        "loaded = sorted(k for k, v in sys.modules.items() if v is not None)\n"
         "import json\n"
         "print(json.dumps(loaded))\n"
     )
@@ -166,6 +180,35 @@ def imported_module_names(statement):
         env=env,
     )
     return set(json.loads(completed.stdout))
+@
+
+The same fresh interpreter also proves that importing the package does
+not require POSIX terminal support.  Shell steps defer those imports until
+they can report the WSL hint; catalog commands remain usable on Windows.
+Python's own [[subprocess]] optionally imports [[fcntl]] on POSIX, so
+the first probe blocks that import as Windows would.  Entries set to
+[[None]] represent blocked modules, not loaded ones; the harness omits
+them.  The second probe blocks all four imports to check the contract
+directly.
+
+<<import cost test functions>>=
+def test_importing_pytorial_does_not_import_posix_terminal_modules():
+    loaded = imported_module_names(
+        "import sys\n"
+        "sys.modules['fcntl'] = None\n"
+        "import pytorial"
+    )
+    assert {"fcntl", "pty", "termios", "tty"}.isdisjoint(loaded)
+
+
+def test_importing_pytorial_without_posix_terminal_modules():
+    loaded = imported_module_names(
+        "import sys\n"
+        "sys.modules.update(dict.fromkeys("
+        "['fcntl', 'pty', 'termios', 'tty']))\n"
+        "import pytorial"
+    )
+    assert "pytorial" in loaded
 @
 
 The first probe is the headline claim: importing the package does not pull

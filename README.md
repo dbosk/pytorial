@@ -184,6 +184,28 @@ prepend the `using-tutorials` lesson before host-specific tutorials, do
 not load the user's installed tutorial directory, and hide the
 standalone-only `install` command.
 
+## Platform support
+
+Shell steps run in a PTY-backed bash session, and `pre_command`,
+`check_command` and `post_command` run through bash, so they need a POSIX
+system. On native Windows, use WSL.
+
+Hosts do not need any platform logic: the `tutorial` subcommand is
+registered everywhere. Where no POSIX terminal is available,
+
+- `tutorial --help` and `tutorial run --help` say that shell steps need
+  WSL;
+- `tutorial run` refuses a tutorial that has shell steps, or shell hooks
+  that would execute, *before* it creates a run or workspace, and exits
+  with status 1;
+- `tutorial list` shows `needs WSL` in place of the progress status for
+  each tutorial that `run` would refuse;
+- `tutorial list`, `tutorial review`, and tutorials made only of question
+  and editor steps keep working.
+
+A host that wants to word its own note can ask
+`pytorial.posix_terminal_available()`.
+
 ## Contributing
 
 For the literate sources, the `make` build, and the repo layout, see
