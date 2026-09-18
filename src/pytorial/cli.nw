@@ -2990,6 +2990,16 @@ RUN_ALLOW_SHELL_HELP = (
 )
 @
 
+The same goes for [[--restart]], with a sharper reason: the universal
+[[using-tutorials]] lesson sends every learner to [[run --help]] to read
+about this flag.  The argparse front end used to list it with no
+description at all, so a learner in an argparse host found the flag but
+not what it does.
+
+<<constants>>=
+RUN_RESTART_HELP = "Start a fresh run instead of resuming saved progress."
+@
+
 <<register run command>>=
 @application.command(
     "run",
@@ -3014,7 +3024,7 @@ def run_command(
         bool,
         typer.Option(
             "--restart",
-            help="Start a fresh run instead of resuming saved progress.",
+            help=RUN_RESTART_HELP,
         ),
     ] = False,
     allow_shell_flag: Annotated[
@@ -3990,7 +4000,11 @@ def add_argparse_subcommand(
         help=RUN_ALLOW_SHELL_HELP,
     )
     run_parser.add_argument("tutorial_id")
-    run_parser.add_argument("--restart", action="store_true")
+    run_parser.add_argument(
+        "--restart",
+        action="store_true",
+        help=RUN_RESTART_HELP,
+    )
     run_parser.set_defaults(
         tutorial_handler=lambda args: argparse_run_command(
             args,
