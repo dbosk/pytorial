@@ -454,6 +454,22 @@ def test_make_console_passes_options_through():
     assert make_console(stderr=True).stderr is True
 @
 
+Rich also consults the environment when it builds a console:
+[[FORCE_COLOR]], [[NO_COLOR]] and [[TTY_COMPATIBLE]] change whether
+output is styled.  That is right for users and wrong for tests, which
+assert on captured text and would pass or fail depending on the shell
+they were started from.  Every test in this chapter therefore starts
+from an environment without those variables; a test that is \emph{about}
+one of them sets it again for itself.
+
+<<test functions>>=
+@pytest.fixture(autouse=True)
+def no_ambient_colour_settings(monkeypatch):
+    """Keep the developer's colour preferences out of captured output."""
+    for name in ("FORCE_COLOR", "NO_COLOR", "TTY_COMPATIBLE"):
+        monkeypatch.delenv(name, raising=False)
+@
+
 The two failure modes differ, so we test one path of each kind: an
 unknown tag, which Rich would drop silently, and a stray closing tag,
 which Rich would refuse to print at all.
@@ -1073,7 +1089,58 @@ noise to a short list.  In pipelines, though, plain tab-separated rows are
 easier to parse, so the non-TTY form omits headers and writes one row per
 tutorial.
 
-The split is why each branch imports what it renders with, rather than the
+Which form to use is a question about the \emph{reader}: is a person
+looking at this, or a program parsing it?  Rich's [[console.is_terminal]]
+looks like the way to ask, and we used to ask it, but it answers a
+different question, namely whether the device understands escape
+sequences.  The two part ways under [[FORCE_COLOR]]: that variable
+asks for colour even when output is captured, some CI systems and
+terminal tools export it globally, and Rich then reports a terminal.
+A script running [[tutorial list | cut -f1]] there received a styled
+table.  So the layout follows the stream itself, and colour stays Rich's
+business.  That is safe in the other direction too: the piped form
+writes through [[csv]] straight to the file, so it carries no styling
+whatever Rich believes.
+
+<<functions>>=
+def stream_is_a_terminal(stream) -> bool:
+    """Return whether ``stream`` is attached to a terminal."""
+
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return False if isatty is None else bool(isatty())
+    except ValueError:
+        return False
+@
+
+The [[ValueError]] is what a closed file raises; a stream we cannot ask
+is not a terminal anyone is reading.
+
+<<test functions>>=
+def test_stream_is_a_terminal_only_for_real_terminals(tmp_path):
+    import os
+    import pty
+
+    master, slave = pty.openpty()
+    try:
+        with open(slave, "w", closefd=False) as terminal:
+            assert stream_is_a_terminal(terminal) is True
+    finally:
+        os.close(master)
+        os.close(slave)
+
+    closed = open(tmp_path / "closed", "w")
+    closed.close()
+    assert stream_is_a_terminal(StringIO()) is False
+    assert stream_is_a_terminal(closed) is False
+    assert stream_is_a_terminal(object()) is False
+@
+
+The renderer lets a caller overrule the detection with [[as_table]].
+The commands never do; it exists so that the table can be tested by
+rendering into a buffer, which is no terminal.
+
+The split is also why each branch imports what it renders with, rather than the
 function importing both up front: the piped form has no table to build and
 the terminal form has no rows to quote, so a run of either path loads only
 its own half.
@@ -1088,15 +1155,23 @@ def render_tutorial_list(
     tutorials: tuple[tuple["Tutorial", ProgressState], ...],
     *,
     cannot_run: Callable[["Tutorial"], bool] = lambda tutorial: False,
+    as_table: bool | None = None,
 ) -> None:
-    """Render the tutorial list for terminals and scripts."""
+    """Render the tutorial list for terminals and scripts.
+
+    A terminal gets a table and anything else tab-separated rows, unless
+    ``as_table`` decides it.
+    """
 
     def status(tutorial: "Tutorial", progress: ProgressState) -> str:
         if cannot_run(tutorial):
             return NEEDS_WSL_STATUS
         return format_progress_status(progress)
 
-    if console.is_terminal:
+    if as_table is None:
+        as_table = stream_is_a_terminal(console.file)
+
+    if as_table:
         <<import Rich's table>>
         table = Table(box=None)
         table.add_column("Tutorial", style="bold")
@@ -1202,6 +1277,7 @@ def test_render_tutorial_list_uses_rich_table_in_tty():
                 ),
             ),
         ),
+        as_table=True,
     )
 
     output = buffer.getvalue()
@@ -1245,6 +1321,7 @@ def test_render_tutorial_list_keeps_square_brackets_in_tty():
                 ),
             ),
         ),
+        as_table=True,
     )
 
     assert "Arrays [part 1] [/x]" in buffer.getvalue()
@@ -1282,6 +1359,7 @@ def test_render_tutorial_list_marks_tutorials_that_cannot_run(force_terminal):
         console,
         entries,
         cannot_run=lambda tutorial: tutorial.id == "needs-shell",
+        as_table=force_terminal,
     )
 
     first, second = [
@@ -3599,6 +3677,28 @@ def test_standalone_run_no_allow_shell_blocks_hooks(tmp_path):
 
     assert result.exit_code == 1
     assert "Tutorial shell hooks and validation are disabled" in result.stderr
+@
+
+Forcing colour must not change what a script receives.  We run the whole
+command with [[FORCE_COLOR]] set, the way a CI system would, and capture
+its output, the way a pipeline would.  The rows must still be
+tab-separated and free of escape sequences.
+
+<<test functions>>=
+def test_list_command_stays_tab_separated_when_colour_is_forced(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("FORCE_COLOR", "3")
+
+    result = CliRunner().invoke(
+        create_standalone_app(state_root=tmp_path / "state"), ["list"]
+    )
+
+    assert result.exit_code == 0
+    assert "\x1b" not in result.stdout
+    first_row = result.stdout.splitlines()[0].split("\t")
+    assert first_row[0] == "using-tutorials"
+    assert len(first_row) == 3
 @
 
 
