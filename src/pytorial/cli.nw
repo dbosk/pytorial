@@ -22,8 +22,6 @@ layer and only varies the argument plumbing.
 <<constants>>
 
 <<functions>>
-
-app = create_standalone_app()
 @
 
 The test module names its own standard-library imports rather than relying
@@ -32,6 +30,8 @@ whatever module objects the module happens to hold, so tests that patched
 [[urllib.request]] used to work by accident; once the CLI stopped importing
 it at module level (\cref{tutorial-cli-deferred}), that accident stopped
 holding.  Importing it here says what the tests actually depend on.
+[[typer]] went the same way when the module stopped importing it
+(\cref{tutorial-cli-deferred-typer}).
 
 <<test [[cli.py]]>>=
 """Tests for the CLI helpers."""
@@ -46,6 +46,7 @@ import pytest
 
 from pytorial.catalog import TutorialCatalog
 from rich.console import Console
+import typer
 from typer.testing import CliRunner
 
 from pytorial.cli import *
@@ -309,6 +310,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import sys
 from typing import Annotated
 from typing import Callable
 from typing import Optional
@@ -320,7 +322,6 @@ from pytorial.catalog import parse_tutorial_step_markdown
 from pytorial.catalog import parse_tutorial_text
 from pytorial.catalog import serialize_tutorial_step
 from pytorial.catalog import universal_tutorial_path
-import typer
 
 from pytorial.model import runs_in_place
 from pytorial.model import step_kind
@@ -371,6 +372,7 @@ one place.
 if TYPE_CHECKING:
     import argparse
     from rich.console import Console
+    import typer
 @
 
 The price is that these become names which exist only for the type checker.
@@ -477,6 +479,64 @@ def test_make_console_prints_square_brackets_literally(workspace):
     assert f"Workspace: {workspace}\n" == buffer.getvalue()
 @
 
+
+
+\subsection{Deferring Typer itself}
+\label{tutorial-cli-deferred-typer}
+
+Typer is the framework this module is written in, so importing it at the
+top looks unavoidable.  It is not, and it is worth avoiding: Typer and
+the Click underneath it were the largest single item left, about a third
+of the time [[import pytorial]] added to a bare interpreter.  That is
+less than Typer costs when imported alone, because it shares much of its
+standard-library footprint with the rest of this package, which is loaded
+either way.  A host built on [[argparse]] never uses Typer at all, yet
+paid for it on every invocation and on every tab completion.  So an argparse host must be able to list, run and review
+tutorials without Typer being imported, and a Typer host loses nothing,
+since it has imported Typer already.
+
+Typer cannot be deferred the way Rich is, with an [[import]] inside the
+function that needs it.  The command callbacks declare their options as
+[[Annotated[bool, typer.Option(...)]]], and under
+[[from __future__ import annotations]] that is a string until Typer
+evaluates it.  Typer evaluates it against the callback's
+[[__globals__]], which is this module's namespace, so a [[typer]] that
+is local to [[create_app]] would not be found.  The name has to be a
+module global; it just does not have to be one \emph{yet}.
+[[load_typer]] binds it on first use.  Every function that touches
+[[typer]] calls it first, including the ones that are only reachable
+through an application, because tests call them directly.
+
+<<functions>>=
+def load_typer():
+    """Import Typer into this module's namespace on first use."""
+
+    global typer
+    import typer
+
+    return typer
+<<import Typer>>=
+load_typer()
+@
+
+That leaves the module-level [[app]], which the console scripts and
+[[from pytorial import app]] expect to find.  Building it needs Typer, so
+it cannot be built at import time any more.  A module [[__getattr__]]
+builds it the first time somebody asks; [[from pytorial.cli import app]],
+which is what a console script does, falls back to that hook, so the
+entry points in [[pyproject.toml]] stay as they are.  Storing the result
+as a real global means the hook runs once.
+
+<<functions>>=
+def __getattr__(name: str):
+    """Build the standalone application when ``app`` is first requested."""
+
+    if name == "app":
+        global app
+        app = create_standalone_app()
+        return app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+@
 
 \section{Building a runner for one host namespace}
 
@@ -2780,6 +2840,7 @@ def create_app(
 ) -> typer.Typer:
     """Create a Typer application for tutorials."""
 
+    <<import Typer>>
     <<create Typer application shell>>
     <<register help callback>>
     <<define shared tutorial path resolution>>
@@ -3082,7 +3143,9 @@ def run_command(
     if result.blocked_step is not None:
         raise typer.Exit(code=1)
 
-    emit_run_summary(result, command=tutorial_command_path(ctx))
+    status = emit_run_summary(result, command=tutorial_command_path(ctx))
+    if status != 0:
+        raise typer.Exit(code=status)
 @
 
 \subsection{Naming the command the reader actually typed}
@@ -3175,6 +3238,7 @@ def create_standalone_app(
 ) -> typer.Typer:
     """Create the standalone tutorial CLI."""
 
+    <<import Typer>>
     application = create_app(
         namespace=namespace,
         state_root=state_root,
@@ -3619,30 +3683,38 @@ already hold that string, as \cref{tutorial-cli-command-path} shows, so
 no host has to configure anything.  The default is the standalone
 spelling, which is also what every other message and lesson uses.
 
+The summary is shared by two front ends that end a command differently:
+Typer raises [[typer.Exit]], [[argparse]] returns a status.  It used to
+speak Typer, printing with [[typer.echo]] and raising [[typer.Exit]],
+which the argparse wrapper then caught and translated back.  That made
+Typer a dependency of every argparse run
+(\cref{tutorial-cli-deferred-typer}).  The summary now speaks the common
+language instead: it prints with [[print]] and \emph{returns} the exit
+status, and each front end ends the command in its own way.
+
 <<functions>>=
-def emit_run_summary(result: RunResult, *, command: str = "tutorial") -> None:
-    """Print a concise summary for a completed run command.
+def emit_run_summary(result: RunResult, *, command: str = "tutorial") -> int:
+    """Print a concise summary for a run command and return its exit status.
 
     ``command`` is what the reader types to reach the tutorial verbs,
     such as ``tutorial`` or ``myhost tutorial``.
     """
 
     if result.already_finished:
-        typer.echo(
-            "Tutorial already completed. Use --restart to begin a fresh run."
-        )
-        return
+        print("Tutorial already completed. Use --restart to begin a fresh run.")
+        return 0
 
     if result.blocked_step is not None:
-        typer.echo(blocked_step_message(result), err=True)
+        print(blocked_step_message(result), file=sys.stderr)
         if result.blocked_step.hint:
             render_hint(make_console(stderr=True), result.blocked_step.hint)
-        raise typer.Exit(code=1)
+        return 1
 
-    typer.echo(
+    print(
         f"Completed {result.tutorial.id}. Review it with "
         f"`{command} review {result.tutorial.id}`."
     )
+    return 0
 @
 
 <<test functions>>=
@@ -3662,9 +3734,10 @@ def test_emit_run_summary_reports_completed_tutorial(capsys, tmp_path):
         executed_steps=len(tutorial.steps),
     )
 
-    emit_run_summary(result)
+    status = emit_run_summary(result)
 
     captured = capsys.readouterr()
+    assert status == 0
     assert "Completed shell-basics" in captured.out
     assert "`tutorial review shell-basics`" in captured.out
 
@@ -3700,11 +3773,10 @@ def test_emit_run_summary_reports_blocked_step_as_an_error(capsys, tmp_path):
         blocked_step=blocked,
     )
 
-    with pytest.raises(typer.Exit) as raised:
-        emit_run_summary(result)
+    status = emit_run_summary(result)
 
     captured = capsys.readouterr()
-    assert raised.value.exit_code == 1
+    assert status == 1
     assert captured.err == f"{blocked_step_message(result)}\n"
     assert captured.err.startswith(BLOCKED_STEP_PREFIX)
     assert blocked.title in captured.err
@@ -4365,7 +4437,10 @@ def run_argparse_command(args: argparse.Namespace) -> int:
 Each leaf command delegates to the same shared command helpers as Typer.
 Argparse still differs in two visible ways: it obtains input through
 [[input()]]-style prompts, and it returns integer exit codes instead of raising
-[[typer.Exit]].  The tutorial-flow policy itself stays shared.
+[[typer.Exit]].  The tutorial-flow policy itself stays shared.  None of
+these commands may touch Typer, not even to catch its exceptions, because
+an argparse host should never have to import it
+(\cref{tutorial-cli-deferred-typer}).
 
 <<functions>>=
 def argparse_list_command(
@@ -4541,11 +4616,7 @@ def argparse_run_command(
     if result.blocked_step is not None:
         return 1
 
-    try:
-        emit_run_summary(result, command=command)
-    except typer.Exit as error:
-        return error.exit_code
-    return 0
+    return emit_run_summary(result, command=command)
 @
 
 The argparse front end builds its step callback through the same factory
@@ -5098,6 +5169,7 @@ def resolve_initial_develop_step(
     The tutorial is ``None`` when the author drafts a new step.
     """
 
+    <<import Typer>>
     if tutorial_id is None:
         new_step = edit_step_in_editor(
             console=console,
@@ -5185,6 +5257,7 @@ def develop_iterate(
 ) -> TutorialStep:
     """Run the develop iterate-and-test loop and return the final step."""
 
+    <<import Typer>>
     step = initial_step
     while True:
         if step.edit_file is not None:
