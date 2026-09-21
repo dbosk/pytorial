@@ -117,7 +117,12 @@ The package surface is intentionally narrow and re-exported from
   (`tutorial_command_path`) from Typer, so a host's learner reads
   `myhost tutorial review <id>`. `make_console` builds every console with Rich
   markup off, so interpolated paths and titles containing `[` print
-  literally; style with `style=`, never with markup tags. The
+  literally; style with `style=`, never with markup tags. Layout
+  decisions (the `list` table versus tab-separated rows) ask
+  `stream_is_a_terminal(console.file)`, never `console.is_terminal`,
+  which `FORCE_COLOR` turns true for captured output; `test_cli.py` has an
+  autouse fixture that clears `FORCE_COLOR`/`NO_COLOR`/`TTY_COMPATIBLE`.
+  The
   standalone-only `develop` command bypasses the state store; it runs a
   step of a `workspace: cwd` tutorial in the cwd (via `workspace_for_run`)
   but always keeps the step source it edits (`step.md`) in a separate
