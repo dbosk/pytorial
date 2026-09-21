@@ -39,6 +39,8 @@ __all__ = [
     "run_interactive_shell",
     "run_scripted_shell",
 ]
+
+<<lazy exports>>
 @
 
 <<test [[pytorial.py]]>>=
@@ -59,7 +61,6 @@ objects live internally.
 <<imports>>=
 from pytorial.cli import add_argparse_subcommand
 from pytorial.cli import add_typer_subcommand
-from pytorial.cli import app
 from pytorial.cli import create_app
 from pytorial.catalog import TutorialCatalog
 from pytorial.catalog import get_tutorial
@@ -78,8 +79,28 @@ from pytorial.state import ProgressState
 from pytorial.state import StateStore
 @
 
+One export is missing from that list on purpose.  [[app]], the ready-made
+standalone application, can only be built once Typer is imported, and
+the CLI chapter goes to some length to keep Typer out of hosts that are
+built on [[argparse]] (\cref{tutorial-cli-deferred-typer}).  Importing
+[[app]] eagerly here would undo that for every host.  The package
+therefore hands it out the same way [[pytorial.cli]] does, through a
+module [[__getattr__]]: [[pytorial.app]] and [[from pytorial import app]]
+keep working, and the cost moves to whoever actually asks for it.
+
+<<lazy exports>>=
+def __getattr__(name: str):
+    """Build the standalone application when ``app`` is first requested."""
+
+    if name == "app":
+        from pytorial import cli
+
+        return cli.app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+@
+
 Let's verify that the package exports the file-backed lookup helpers and
-the CLI integration helpers.
+the CLI integration helpers, the lazily built [[app]] among them.
 
 <<test functions>>=
 def test_package_exports_catalog_helpers():
@@ -92,6 +113,16 @@ def test_package_exports_cli_helpers():
     assert callable(create_app)
     assert callable(add_typer_subcommand)
     assert callable(add_argparse_subcommand)
+
+
+def test_package_builds_the_standalone_app_on_request():
+    import typer
+
+    import pytorial
+    import pytorial.cli
+
+    assert isinstance(pytorial.app, typer.Typer)
+    assert pytorial.app is pytorial.cli.app
 @
 
 The embedding helpers register the tutorial group on every platform and
@@ -254,6 +285,81 @@ def test_adding_a_typer_subcommand_does_not_import_rich():
         if name.split(".")[0] in {"rich", "markdown_it", "pygments"}
     )
     assert offenders == []
+@
+
+Typer is the other large cost, and the one that is easiest to lose track
+of, because the CLI is \emph{written} in it.  A host built on Typer has
+imported it anyway, but a host built on [[argparse]] never needs it, so
+for that host the whole tutorial group must work without it
+(\cref{tutorial-cli-deferred-typer}).  The cheap half of the claim is the
+import.
+
+<<import cost test functions>>=
+TYPER_STACK = {"typer", "click"}
+
+
+def test_importing_pytorial_does_not_import_typer():
+    loaded = imported_module_names("import pytorial")
+
+    assert sorted(n for n in loaded if n.split(".")[0] in TYPER_STACK) == []
+@
+
+The half that matters is that an argparse host can then \emph{use} the
+group.  The probe plays such a host from registration to the end of a
+run: it lists, runs a one-question tutorial to completion and reviews
+it.  The run is the important verb, since its closing summary was the
+last place where the argparse path reached for Typer.  The probe
+captures the commands' output, because the harness reads the module list
+from the same standard output.
+
+<<import cost test functions>>=
+ARGPARSE_HOST_SESSION = """
+import argparse, contextlib, io, pathlib, tempfile
+import pytorial
+from pytorial.shell import ShellResult
+
+LESSON = '''---
+id: q
+title: Q
+summary: One question.
+---
+
+# Ask
+
+```tutorial-step
+kind: input
+answers:
+  - ok
+```
+
+Say ok.
+'''
+
+def answer(*, step):
+    return ShellResult("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:01+00:00", 0, "ok")
+
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    (root / "q.md").write_text(LESSON)
+    parser = argparse.ArgumentParser(prog="host")
+    pytorial.add_argparse_subcommand(
+        parser.add_subparsers(),
+        state_root=root / "state",
+        tutorial_paths=(root / "q.md",),
+        question_runner=answer,
+    )
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        for argv in (["list"], ["run", "q"], ["review", "q"]):
+            args = parser.parse_args(["tutorial", *argv])
+            assert args.tutorial_handler(args) == 0, argv
+    assert "`host tutorial review q`" in output.getvalue()
+"""
+
+
+def test_an_argparse_host_never_imports_typer():
+    loaded = imported_module_names(ARGPARSE_HOST_SESSION)
+
+    assert sorted(n for n in loaded if n.split(".")[0] in TYPER_STACK) == []
 @
 
 Rich is the headline cost but not the only one.  Fetching a tutorial over

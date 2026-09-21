@@ -163,7 +163,8 @@ Repo-local example: `tutorials/shell-basics.md`.
   `PyYAML`, `rich`, `typer`.
 - Heavy dependencies are imported **at the point of use**, not at module
   level: `rich`, `yaml`, `urllib.request`, `platformdirs`, `argparse`,
-  `tempfile`, `csv`, `json`, `hashlib`. Hosts embed the CLI as a
+  `tempfile`, `csv`, `json`, `hashlib`, and `typer` itself (see below).
+  Hosts embed the CLI as a
   subcommand, so `import pytorial` runs on every invocation of the host,
   and these are only needed once a tutorial command actually does
   something. Each one has a named chunk (`<<import the YAML parser>>`)
@@ -173,7 +174,16 @@ Repo-local example: `tutorials/shell-basics.md`.
   is safe because `from __future__ import annotations` leaves annotations
   unevaluated — but it means `typing.get_type_hints()` on those functions
   would raise `NameError`, so Typer command callbacks must keep to
-  `Annotated` and standard-library annotations. `tests/unit/test_import_cost.py`
+  `Annotated` and standard-library annotations. `typer` is the one
+  deferred import that is not function-local: Typer evaluates the
+  callbacks' stringified `Annotated[..., typer.Option(...)]` against the
+  module globals, so `load_typer()` (chunk `<<import Typer>>`) binds a
+  module global on first use, and every top-level function that uses
+  `typer` at run time calls it first. The argparse front end must never
+  reach Typer (`emit_run_summary` prints and returns a status for that
+  reason), and the module-level `app` in `pytorial.cli` and `pytorial` is
+  built on first access through a module `__getattr__`.
+  `tests/unit/test_import_cost.py`
   (from `<<test [[import_cost.py]]>>` in `pytorial.nw`) enforces all of
   this by probing a fresh subprocess.
 - A test fixture that two chapters need is defined once, in the lower
