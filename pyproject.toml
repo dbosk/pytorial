@@ -36,9 +36,47 @@ repository = "https://github.com/dbosk/pytorial"
 
 [tool.poetry]
 packages = [{include = "pytorial", from = "src"}]
+# The .py and lesson .md files are generated from the .nw sources and
+# git-ignored, so Poetry drops them unless they are included explicitly.
+#
+# Two Poetry behaviours shape these lists (tests/unit/test_packaging.py
+# checks the result): an include beats an exclude, and an exclude cannot
+# be limited to one format. Hence the lessons are listed by name, since a
+# tutorials/*.md glob would also ship a stray CLAUDE.md past any exclude,
+# and the .nw sources are excluded globally and re-included for the sdist
+# alone.
 include = [
-  {path = "src/**/*.py", format = "wheel"},
-  {path = "src/pytorial/tutorials/*.md", format = ["sdist", "wheel"]},
+  {path = "src/**/*.py", format = ["sdist", "wheel"]},
+  {path = "src/pytorial/tutorials/shell-basics.md", format = ["sdist", "wheel"]},
+  {path = "src/pytorial/tutorials/using-tutorials.md", format = ["sdist", "wheel"]},
+  {path = "src/pytorial/tutorials/writing-tutorials.md", format = ["sdist", "wheel"]},
+  {path = "src/**/*.nw", format = "sdist"},
+  # What it takes to rebuild everything from the sdist with make: every
+  # Makefile, the inputs of the documentation, and the tracked files of
+  # the makefiles submodule. Poetry does not see a submodule's ignore
+  # rules, and that directory collects build products, so a makefiles/**
+  # glob would ship them; these patterns match tracked files only.
+  {path = "Makefile", format = "sdist"},
+  {path = "CONTRIBUTING.md", format = "sdist"},
+  {path = "src/pytorial/Makefile", format = "sdist"},
+  {path = "src/pytorial/tutorials/Makefile", format = "sdist"},
+  {path = "tests/Makefile", format = "sdist"},
+  {path = "doc/Makefile", format = "sdist"},
+  {path = "doc/pytorial.nw", format = "sdist"},
+  {path = "doc/abstract.tex", format = "sdist"},
+  {path = "doc/preamble.tex", format = "sdist"},
+  {path = "makefiles/*.mk", format = "sdist"},
+  {path = "makefiles/*.nw", format = "sdist"},
+  {path = "makefiles/*.bib", format = "sdist"},
+  {path = "makefiles/Makefile", format = "sdist"},
+  {path = "makefiles/Dockerfile", format = "sdist"},
+  {path = "makefiles/LICENSE", format = "sdist"},
+  {path = "makefiles/README.md", format = "sdist"},
+  {path = "makefiles/CONTRIBUTING.md", format = "sdist"},
+  {path = "makefiles/latexmkrc", format = "sdist"},
+  {path = "makefiles/intro.tex", format = "sdist"},
+  {path = "makefiles/makefiles.tex", format = "sdist"},
+  {path = "makefiles/preamble.tex", format = "sdist"},
 ]
 exclude = [
   "src/pytorial/.gitignore",
