@@ -3007,6 +3007,7 @@ RUN_RESTART_HELP = "Start a fresh run instead of resuming saved progress."
     help=with_platform_note("Run or resume one tutorial."),
 )
 def run_command(
+    ctx: typer.Context,
     tutorial_id: str = typer.Argument(
         ...,
         autocompletion=run_tutorial_id_completion,
@@ -3081,7 +3082,28 @@ def run_command(
     if result.blocked_step is not None:
         raise typer.Exit(code=1)
 
-    emit_run_summary(result)
+    emit_run_summary(result, command=tutorial_command_path(ctx))
+@
+
+\subsection{Naming the command the reader actually typed}
+\label{tutorial-cli-command-path}
+
+[[emit_run_summary]] wants the command that leads to the tutorial verbs.
+Click keeps a context per command level and can spell out the path to
+each.  The context of [[run]] knows [[myhost tutorial run]]; its parent
+is the tutorial group, whose path is exactly the prefix we want.  That
+holds wherever the group is mounted, and in the standalone CLI it yields
+the name the reader used, [[tutorial]] or [[pytorial]].  A context
+without a parent cannot occur for a registered subcommand, but falling
+back to the standalone spelling is cheaper than reasoning about it.
+
+<<functions>>=
+def tutorial_command_path(ctx: typer.Context) -> str:
+    """Return the command that reaches the tutorial verbs from ``ctx``."""
+
+    if ctx.parent is None:
+        return "tutorial"
+    return ctx.parent.command_path
 @
 
 Review is the third and final command because it reuses the same runner wiring
@@ -3586,9 +3608,24 @@ The CLI should give concise feedback after the runner returns.  We keep
 that logic separate from the command function so the argparse wrapper can
 reuse it.
 
+The closing line tells the learner how to read the run back, and it
+spells out a whole command, so it must be the command \emph{this}
+learner can type.  Inside a host that is [[canvaslms tutorial review]],
+not [[tutorial review]]; if pytorial came along only as the host's
+dependency, the bare [[tutorial]] may not even be on the learner's
+[[PATH]].  The summary cannot know where it is mounted, so the caller
+passes the command that leads to the tutorial verbs.  Both front ends
+already hold that string, as \cref{tutorial-cli-command-path} shows, so
+no host has to configure anything.  The default is the standalone
+spelling, which is also what every other message and lesson uses.
+
 <<functions>>=
-def emit_run_summary(result: RunResult) -> None:
-    """Print a concise summary for a completed run command."""
+def emit_run_summary(result: RunResult, *, command: str = "tutorial") -> None:
+    """Print a concise summary for a completed run command.
+
+    ``command`` is what the reader types to reach the tutorial verbs,
+    such as ``tutorial`` or ``myhost tutorial``.
+    """
 
     if result.already_finished:
         typer.echo(
@@ -3604,7 +3641,7 @@ def emit_run_summary(result: RunResult) -> None:
 
     typer.echo(
         f"Completed {result.tutorial.id}. Review it with "
-        f"`tutorial review {result.tutorial.id}`."
+        f"`{command} review {result.tutorial.id}`."
     )
 @
 
@@ -3629,6 +3666,11 @@ def test_emit_run_summary_reports_completed_tutorial(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "Completed shell-basics" in captured.out
+    assert "`tutorial review shell-basics`" in captured.out
+
+    emit_run_summary(result, command="myhost tutorial")
+
+    assert "`myhost tutorial review shell-basics`" in capsys.readouterr().out
 @
 
 The blocked branch is the command's failure report, so it must behave
@@ -3874,6 +3916,33 @@ def test_add_typer_subcommand_honours_no_allow_shell_override(tmp_path):
     assert "Tutorial shell hooks and validation are disabled" in result.stderr
 @
 
+A host's learner must be told the host's command.  We mount the group in
+a host called [[myhost]] and finish a tutorial; the closing line has to
+lead with that name.  Click takes the program name from how the
+application is invoked, which [[prog_name]] stands in for here.
+
+<<test functions>>=
+def test_add_typer_subcommand_summary_names_the_host_command(tmp_path):
+    tutorial_path = write_hook_tutorial(tmp_path)
+    parent = typer.Typer()
+    add_typer_subcommand(
+        parent,
+        state_root=tmp_path / "state",
+        tutorial_paths=(tutorial_path,),
+        shell_runner=lambda **kwargs: run_scripted_shell(
+            "printf '%s\\n' \"$READY\"\n",
+            **kwargs,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        parent, ["tutorial", "run", "hooks"], prog_name="myhost"
+    )
+
+    assert result.exit_code == 0
+    assert "`myhost tutorial review hooks`" in result.stdout
+@
+
 An embedded host registers the group on every platform
 (\cref{cli-platform-note}).  Against the same mounted tutorial we
 therefore contrast the two platforms: the help only names WSL where shell
@@ -4048,6 +4117,7 @@ def add_argparse_subcommand(
             shell_runner=shell_runner,
             editor_runner=editor_runner,
             question_runner=question_runner,
+            command=parser.prog,
         )
     )
     return parser
@@ -4178,6 +4248,40 @@ def test_add_argparse_subcommand_honours_no_allow_shell_override(
 
     assert exit_code == 1
     assert "Tutorial shell hooks and validation are disabled" in captured.out
+@
+
+The argparse front end needs no click context for this.  [[argparse]]
+gives every subparser a [[prog]] made of the host's program name and the
+subcommand names leading to it, so the tutorial group's parser already
+holds [[myhost tutorial]], including when the host sets [[prog]] itself
+or mounts the group under another name.
+
+<<test functions>>=
+def test_add_argparse_subcommand_summary_names_the_host_command(
+    tmp_path,
+    capsys,
+):
+    tutorial_path = write_hook_tutorial(tmp_path)
+    parser = argparse.ArgumentParser(prog="myhost")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.required = True
+    add_argparse_subcommand(
+        subparsers,
+        name="lessons",
+        state_root=tmp_path / "state",
+        tutorial_paths=(tutorial_path,),
+        shell_runner=lambda **kwargs: run_scripted_shell(
+            "printf '%s\\n' \"$READY\"\n",
+            **kwargs,
+        ),
+    )
+
+    exit_code = run_argparse_command(
+        parser.parse_args(["lessons", "run", "hooks"])
+    )
+
+    assert exit_code == 0
+    assert "`myhost lessons review hooks`" in capsys.readouterr().out
 @
 
 
@@ -4386,8 +4490,12 @@ def argparse_run_command(
     shell_runner: Callable[..., object],
     editor_runner: Callable[..., object],
     question_runner: Callable[..., ShellResult] | None,
+    command: str = "tutorial",
 ) -> int:
-    """Implement the argparse ``run`` subcommand."""
+    """Implement the argparse ``run`` subcommand.
+
+    ``command`` is what the reader types to reach the tutorial verbs.
+    """
 
     try:
         console = make_console()
@@ -4434,7 +4542,7 @@ def argparse_run_command(
         return 1
 
     try:
-        emit_run_summary(result)
+        emit_run_summary(result, command=command)
     except typer.Exit as error:
         return error.exit_code
     return 0

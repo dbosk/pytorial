@@ -193,6 +193,10 @@ standalone-only `install` command. `using-tutorials` is self-contained
 for that reason: it refers to no other tutorial and to no verb a host
 hides, so a learner can finish it whatever else the host mounts.
 
+Messages that tell the learner what to type next name the command as the
+host mounted it (`myhost tutorial review <id>`), taken from the host's
+own parser, so the host passes nothing extra.
+
 ## Platform support
 
 Shell steps run in a PTY-backed bash session, and `pre_command`,
