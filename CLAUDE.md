@@ -105,7 +105,12 @@ The package surface is intentionally narrow and re-exported from
   kept as an alias; the embedded subcommand default name stays
   `tutorial`. User-facing command examples (README, lessons, CLI
   messages) use the `tutorial` alias, because that spelling is the same
-  standalone and embedded. `make_console` builds every console with Rich
+  standalone and embedded. The one message that spells out a command to
+  type, the run summary, instead names the command as mounted:
+  `emit_run_summary(result, command=...)` gets `parser.prog` from the
+  argparse front end and `ctx.parent.command_path`
+  (`tutorial_command_path`) from Typer, so a host's learner reads
+  `myhost tutorial review <id>`. `make_console` builds every console with Rich
   markup off, so interpolated paths and titles containing `[` print
   literally; style with `style=`, never with markup tags. The
   standalone-only `develop` command bypasses the state store; it runs a
