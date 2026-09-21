@@ -112,6 +112,11 @@ Step body in Markdown.
   answers use the same string-or-`{mode, pattern}` format as
   `required_patterns`; select questions use literal option text in
   `options` and `answers`.
+- A shell step has the size of the reader's terminal, so program output
+  wraps differently for different readers. Plain-string patterns ignore
+  that, because they collapse whitespace, line breaks included. A `regex`
+  pattern that spans several words should join them with `\s+` rather
+  than a literal space.
 - `pre_command`, `check_command`, and `post_command` only run when the
   reader passes `--allow-shell`.
 - Use one YAML string for each shell field. Multi-line shell scripts

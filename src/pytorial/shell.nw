@@ -64,6 +64,8 @@ import os
 import shlex
 import select
 import shutil
+import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -582,6 +584,157 @@ def prepare_child_terminal() -> None:
 @
 
 
+\section{Giving the PTY the size of the real terminal}
+\label{shell-window-size}
+
+A freshly opened PTY has a window size of zero rows by zero columns.
+Nothing breaks outright: bash, readline and Python's
+[[shutil.get_terminal_size]] all fall back to eighty columns.  But the
+learner is sitting at a real terminal that has a real size, and the step
+shell should feel like that terminal.  With the fallback, help text wraps
+at eighty columns on a wide screen, and full-screen programs started
+from the step, such as [[less]] or an editor, draw into a screen of the
+wrong shape.
+
+The kernel keeps a window size per terminal, so the fix is to copy it
+from the learner's terminal to the PTY.  We use the [[TIOCGWINSZ]] and
+[[TIOCSWINSZ]] requests directly; [[termios.tcgetwinsize]] would read
+better but only exists from Python~3.11, and we support 3.10.  Both
+requests carry the same four unsigned shorts (rows, columns and two
+pixel sizes), so the bytes we read can be written back untouched.
+
+The source is not always a terminal: tests and scripted runs have none.
+In that case the read fails with [[OSError]] and we leave the PTY as it
+was, which keeps the eighty-column fallback and therefore keeps scripted
+transcripts reproducible.  The return value says which of the two
+happened.
+
+<<functions>>=
+def copy_window_size(source_fd: int, target_fd: int) -> bool:
+    """Give ``target_fd``'s terminal the window size of ``source_fd``'s.
+
+    Return False, changing nothing, when ``source_fd`` is not a terminal.
+    """
+
+    <<import the POSIX terminal modules>>
+    try:
+        size = fcntl.ioctl(source_fd, termios.TIOCGWINSZ, EMPTY_WINDOW_SIZE)
+        fcntl.ioctl(target_fd, termios.TIOCSWINSZ, size)
+    except OSError:
+        return False
+    return True
+<<constants>>=
+EMPTY_WINDOW_SIZE = struct.pack("HHHH", 0, 0, 0, 0)
+@
+
+Let's verify the copy between two real PTYs, and that a source which is
+no terminal leaves the target alone.
+
+<<test functions>>=
+def window_size(fd):
+    import fcntl
+    import termios
+
+    packed = fcntl.ioctl(fd, termios.TIOCGWINSZ, EMPTY_WINDOW_SIZE)
+    return struct.unpack("HHHH", packed)[:2]
+
+
+def set_window_size(fd, rows, columns):
+    import fcntl
+    import termios
+
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
+
+@pytest.fixture
+def terminal_and_pty():
+    """Yield the slave of a stand-in terminal and the master of a PTY."""
+    import pty
+
+    terminal_master, terminal_slave = pty.openpty()
+    pty_master, pty_slave = pty.openpty()
+    try:
+        yield terminal_slave, pty_master
+    finally:
+        for fd in (terminal_master, terminal_slave, pty_master, pty_slave):
+            os.close(fd)
+
+
+def test_copy_window_size_copies_rows_and_columns(terminal_and_pty):
+    terminal, pty_master = terminal_and_pty
+    set_window_size(terminal, 33, 101)
+
+    assert copy_window_size(terminal, pty_master) is True
+    assert window_size(pty_master) == (33, 101)
+
+
+def test_copy_window_size_ignores_a_source_that_is_no_terminal(
+    terminal_and_pty, tmp_path
+):
+    _, pty_master = terminal_and_pty
+    set_window_size(pty_master, 24, 80)
+
+    with open(tmp_path / "plain-file", "w") as source:
+        assert copy_window_size(source.fileno(), pty_master) is False
+
+    assert window_size(pty_master) == (24, 80)
+@
+
+Copying once is not enough, because learners resize their terminals.
+The kernel announces a resize with [[SIGWINCH]], but only to the
+processes of the \emph{real} terminal, which means to us and not to the
+shell inside the PTY.  So while a session is relayed we catch the signal
+and copy the size again.  That single [[ioctl]] is all the forwarding
+that is needed: changing a PTY's size makes the kernel send [[SIGWINCH]]
+to the PTY's own foreground process group, so bash, or whatever
+full-screen program the learner started, redraws by itself.
+
+We install the handler \emph{before} the first copy, so a resize that
+lands between the two is not lost, and we restore the previous handler
+afterwards, because a host application may have one of its own.
+[[signal.signal]] only works in the main thread; a host that runs a
+tutorial from another thread gets the initial size and no live resizing,
+which is better than refusing to run.  The relay loop needs no change:
+Python retries an interrupted [[select]] once the handler has returned.
+
+<<functions>>=
+@contextmanager
+def following_window_size(source_fd: int, target_fd: int):
+    """Keep ``target_fd``'s window size equal to ``source_fd``'s."""
+
+    def on_resize(signum, frame):
+        copy_window_size(source_fd, target_fd)
+
+    try:
+        previous = signal.signal(signal.SIGWINCH, on_resize)
+    except ValueError:
+        previous = None
+    try:
+        copy_window_size(source_fd, target_fd)
+        yield
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGWINCH, previous)
+@
+
+<<test functions>>=
+def test_following_window_size_tracks_resizes_and_restores_the_handler(
+    terminal_and_pty,
+):
+    terminal, pty_master = terminal_and_pty
+    set_window_size(terminal, 24, 80)
+    before = signal.getsignal(signal.SIGWINCH)
+
+    with following_window_size(terminal, pty_master):
+        assert window_size(pty_master) == (24, 80)
+        set_window_size(terminal, 50, 132)
+        os.kill(os.getpid(), signal.SIGWINCH)
+        assert window_size(pty_master) == (50, 132)
+
+    assert signal.getsignal(signal.SIGWINCH) == before
+@
+
+
 \section{Launching bash on a configured PTY}
 
 The scripted and interactive shells must start bash in exactly the same PTY
@@ -602,6 +755,14 @@ how to source one script before showing the prompt.  The helper keeps two
 important invariants in one place: the script ends with a newline so the last
 line is sourced normally, and the temporary file is removed afterwards even if
 shell startup fails.
+
+The helper also sizes the PTY, when the caller names a terminal to take
+the size from (\cref{shell-window-size}).  It does so on the slave side
+and \emph{before} bash starts, so neither readline nor anything a
+[[pre_command]] prints ever sees the zero-by-zero default.  Only the
+interactive shell passes a terminal.  The scripted shell has no learner
+and no terminal to imitate, and leaving its PTY unsized keeps its
+transcripts at the eighty-column fallback wherever they are recorded.
 
 <<functions>>=
 @contextmanager
@@ -634,13 +795,19 @@ def spawn_shell_process(
     prompt_name: str = "pytorial",
     env: dict[str, str] | None = None,
     rcfile: str | None = None,
+    window_size_from: int | None = None,
 ) -> tuple[int, subprocess.Popen]:
-    """Start bash on a PTY and return the master fd and child process."""
+    """Start bash on a PTY and return the master fd and child process.
+
+    With ``window_size_from``, the PTY starts with that terminal's size.
+    """
 
     <<import the POSIX terminal modules>>
     workspace_path = Path(workspace)
     master_fd, slave_fd = pty.openpty()
     try:
+        if window_size_from is not None:
+            copy_window_size(window_size_from, slave_fd)
         argv = [shell, "--noprofile"]
         if rcfile is None:
             argv.append("--norc")
@@ -918,6 +1085,39 @@ def test_pre_command_rcfile_cleans_up_on_exception():
     assert rcfile.exists() is False
 @
 
+The unit tests above show that a size can be copied; what the learner
+cares about is that bash \emph{starts} with it.  So we let a second PTY
+stand in for the learner's terminal and ask the step shell for its size.
+The contrast case is the shell without a terminal to imitate, which
+still reports the zero-by-zero default that programs read as
+\enquote{assume eighty columns}.
+
+<<test functions>>=
+def stty_size_in_step_shell(tmp_path, **spawn_options):
+    master_fd, process = spawn_shell_process(workspace=tmp_path, **spawn_options)
+    try:
+        os.write(master_fd, b"stty size\nexit\n")
+        return read_transcript(master_fd, process)
+    finally:
+        os.close(master_fd)
+        process.wait()
+
+
+def test_step_shell_starts_with_the_terminal_window_size(
+    terminal_and_pty, tmp_path
+):
+    terminal, _ = terminal_and_pty
+    set_window_size(terminal, 33, 101)
+
+    transcript = stty_size_in_step_shell(tmp_path, window_size_from=terminal)
+
+    assert "33 101" in transcript
+
+
+def test_step_shell_without_a_terminal_keeps_the_unsized_default(tmp_path):
+    assert "0 0" in stty_size_in_step_shell(tmp_path)
+@
+
 
 \section{Running interactive shell sessions}
 
@@ -1048,6 +1248,7 @@ with context as rcfile:
         prompt_name=prompt_name,
         env=env,
         rcfile=rcfile,
+        window_size_from=sys.stdout.fileno(),
     )
     <<capture terminal state for relay>>
     <<relay the interactive session in raw mode>>
@@ -1060,15 +1261,20 @@ stdout_fd = sys.stdout.fileno()
 original_mode = termios.tcgetattr(stdin_fd)
 @
 
+While the relay runs, the PTY follows the size of the learner's terminal
+(\cref{shell-window-size}).  We read the size from stdout, the side of
+the terminal that programs draw on.
+
 <<relay the interactive session in raw mode>>=
 try:
     tty.setraw(stdin_fd)
-    transcript = relay_interactive_shell(
-        master_fd,
-        process,
-        stdin_fd,
-        stdout_fd,
-    )
+    with following_window_size(stdout_fd, master_fd):
+        transcript = relay_interactive_shell(
+            master_fd,
+            process,
+            stdin_fd,
+            stdout_fd,
+        )
 finally:
     termios.tcsetattr(stdin_fd, termios.TCSADRAIN, original_mode)
 @
