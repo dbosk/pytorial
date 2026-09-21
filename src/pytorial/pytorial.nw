@@ -107,6 +107,121 @@ def test_package_exports_platform_predicate():
 @
 
 
+\section{What the distributions contain}
+
+Almost nothing a user installs is in the repository.  The modules and
+the lessons are tangled from the literate sources and ignored by git, so
+the packaging rules in [[pyproject.toml]] have to name them, and a
+mistake there is silent: the build succeeds and the suite passes, because
+the tests import from the source tree, not from an artefact.  That is how
+releases up to 0.10.0 shipped a source distribution with the lessons and
+not one Python module, and both artefacts with a stray [[CLAUDE.md]]
+that a tool had left next to the lessons.
+
+So we look inside the artefacts.  The properties we want are these.
+\begin{description}
+\item[The wheel is the package and nothing else:] every generated module
+  and exactly the built-in lessons.  Comparing the lessons with
+  [[BUILTIN_TUTORIAL_FILES]] catches both a stray file and a new lesson
+  that was added to the catalog but not to [[pyproject.toml]], which has
+  to list the lessons by name.
+\item[The source distribution can be installed \emph{and} read:] it
+  carries the same generated files, because a build from it has no noweb
+  to tangle with, and the literate sources, because they are the source.
+  The wheel must not carry those; nobody reads them from
+  [[site-packages]].
+\end{description}
+
+The top-level [[Makefile]] builds the artefacts before it runs the
+tests.  A bare [[pytest]] in a tree that was never built has nothing to
+inspect, and skips with a message that says how to build.
+
+<<test [[packaging.py]]>>=
+"""Tests that look inside the built wheel and source distribution."""
+
+import pathlib
+import re
+import tarfile
+import zipfile
+
+import pytest
+
+from pytorial.catalog import BUILTIN_TUTORIAL_FILES
+
+REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
+PACKAGE = REPOSITORY / "src" / "pytorial"
+
+<<packaging test functions>>
+@
+
+We take the version from [[pyproject.toml]] rather than from the
+installed package's metadata, which only changes when someone reinstalls
+the development environment.  A regular expression does, as it does in
+the [[Makefile]]; [[tomllib]] would be tidier but arrived in Python~3.11.
+
+<<packaging test functions>>=
+def built(suffix):
+    """Return the path of this version's artefact ending in `suffix`."""
+
+    version = re.search(
+        r'^version *= *"([^"]+)"',
+        (REPOSITORY / "pyproject.toml").read_text(),
+        re.MULTILINE,
+    ).group(1)
+    path = REPOSITORY / "dist" / f"pytorial-{version}{suffix}"
+    if not path.is_file():
+        pytest.skip(f"{path.name} is not built; run `make compile` first")
+    return path
+
+
+def wheel_names():
+    with zipfile.ZipFile(built("-py3-none-any.whl")) as wheel:
+        return {
+            name.removeprefix("pytorial/")
+            for name in wheel.namelist()
+            if name.startswith("pytorial/")
+        }
+
+
+def sdist_names():
+    with tarfile.open(built(".tar.gz")) as sdist:
+        return {
+            name.split("/src/pytorial/", 1)[1]
+            for name in sdist.getnames()
+            if "/src/pytorial/" in name
+        }
+
+
+def generated_modules():
+    return {path.name for path in PACKAGE.glob("*.py")}
+
+
+def lessons():
+    return {f"tutorials/{name}" for name in BUILTIN_TUTORIAL_FILES}
+
+
+def literate_sources():
+    return {
+        str(path.relative_to(PACKAGE)) for path in PACKAGE.rglob("*.nw")
+    }
+@
+
+Each expectation is an equality, not a list of things to look for, so
+that anything unexpected fails the test without anyone having predicted
+it.
+
+<<packaging test functions>>=
+def test_wheel_holds_the_modules_and_the_lessons_and_nothing_else():
+    assert generated_modules()
+    assert wheel_names() == generated_modules() | lessons()
+
+
+def test_sdist_holds_what_the_wheel_holds_plus_the_literate_sources():
+    assert literate_sources()
+    assert sdist_names() == generated_modules() | lessons() | literate_sources()
+@
+
+
 \section{Keeping the import cheap}
 
 The package surface is not only a discoverability decision, it is also a

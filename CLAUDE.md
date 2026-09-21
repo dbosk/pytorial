@@ -183,6 +183,16 @@ Repo-local example: `tutorials/shell-basics.md`.
   default `prepend` import mode and on `tests/unit/` having no
   `__init__.py`. Same-named helpers that differ per chapter on purpose
   (`write_demo_tutorial`, `no_posix_terminal`) stay separate.
+- Packaging: the modules and lesson `.md` files are generated and
+  git-ignored, so `pyproject.toml` must include them explicitly. In
+  Poetry an `include` beats an `exclude`, and an `exclude` cannot be
+  limited to one format; so lessons are included **by name** (a new
+  built-in lesson needs a line there as well as in
+  `BUILTIN_TUTORIAL_FILES`), and the `.nw` sources are excluded globally
+  and re-included for the sdist only. `tests/unit/test_packaging.py` (from
+  `<<test [[packaging.py]]>>` in `pytorial.nw`) opens the built wheel and
+  sdist and compares their contents with the source tree; it needs
+  `make compile` to have run, which `make test` ensures.
 - Black target version is `py310`.
 - Bumping the package version: edit `version` in `pyproject.toml`; the
   top-level `Makefile` reads it for `gh release create`.
