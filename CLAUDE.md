@@ -189,7 +189,13 @@ Repo-local example: `tutorials/shell-basics.md`.
   limited to one format; so lessons are included **by name** (a new
   built-in lesson needs a line there as well as in
   `BUILTIN_TUTORIAL_FILES`), and the `.nw` sources are excluded globally
-  and re-included for the sdist only. `tests/unit/test_packaging.py` (from
+  and re-included for the sdist only. The sdist is also rebuildable with
+  `make`: it carries every `Makefile`, the inputs of `doc/`, and the
+  *tracked, non-hidden* files of the `makefiles/` submodule, matched by
+  patterns because Poetry does not see a submodule's ignore rules (that
+  directory collects ignored build products). A new tracked file type in
+  the submodule, or a new input of `doc/Makefile`, needs a line in
+  `pyproject.toml`. `tests/unit/test_packaging.py` (from
   `<<test [[packaging.py]]>>` in `pytorial.nw`) opens the built wheel and
   sdist and compares their contents with the source tree; it needs
   `make compile` to have run, which `make test` ensures.

@@ -51,6 +51,32 @@ include = [
   {path = "src/pytorial/tutorials/using-tutorials.md", format = ["sdist", "wheel"]},
   {path = "src/pytorial/tutorials/writing-tutorials.md", format = ["sdist", "wheel"]},
   {path = "src/**/*.nw", format = "sdist"},
+  # What it takes to rebuild everything from the sdist with make: every
+  # Makefile, the inputs of the documentation, and the tracked files of
+  # the makefiles submodule. Poetry does not see a submodule's ignore
+  # rules, and that directory collects build products, so a makefiles/**
+  # glob would ship them; these patterns match tracked files only.
+  {path = "Makefile", format = "sdist"},
+  {path = "CONTRIBUTING.md", format = "sdist"},
+  {path = "src/pytorial/Makefile", format = "sdist"},
+  {path = "src/pytorial/tutorials/Makefile", format = "sdist"},
+  {path = "tests/Makefile", format = "sdist"},
+  {path = "doc/Makefile", format = "sdist"},
+  {path = "doc/pytorial.nw", format = "sdist"},
+  {path = "doc/abstract.tex", format = "sdist"},
+  {path = "doc/preamble.tex", format = "sdist"},
+  {path = "makefiles/*.mk", format = "sdist"},
+  {path = "makefiles/*.nw", format = "sdist"},
+  {path = "makefiles/*.bib", format = "sdist"},
+  {path = "makefiles/Makefile", format = "sdist"},
+  {path = "makefiles/Dockerfile", format = "sdist"},
+  {path = "makefiles/LICENSE", format = "sdist"},
+  {path = "makefiles/README.md", format = "sdist"},
+  {path = "makefiles/CONTRIBUTING.md", format = "sdist"},
+  {path = "makefiles/latexmkrc", format = "sdist"},
+  {path = "makefiles/intro.tex", format = "sdist"},
+  {path = "makefiles/makefiles.tex", format = "sdist"},
+  {path = "makefiles/preamble.tex", format = "sdist"},
 ]
 exclude = [
   "src/pytorial/.gitignore",

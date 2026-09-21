@@ -130,6 +130,11 @@ So we look inside the artefacts.  The properties we want are these.
   to tangle with, and the literate sources, because they are the source.
   The wheel must not carry those; nobody reads them from
   [[site-packages]].
+\item[The source distribution can be rebuilt:] someone who unpacks it and
+  has noweb can run [[make]] and get the modules, the lessons, the tests
+  and this document again.  That takes every [[Makefile]], the inputs of
+  the documentation, and the shared rules in the [[makefiles]] submodule
+  that the [[Makefile]]s include.
 \end{description}
 
 The top-level [[Makefile]] builds the artefacts before it runs the
@@ -183,13 +188,15 @@ def wheel_names():
         }
 
 
-def sdist_names():
+def sdist_names(directory="src/pytorial"):
+    """Return the sdist's files under `directory`, relative to it."""
+
     with tarfile.open(built(".tar.gz")) as sdist:
-        return {
-            name.split("/src/pytorial/", 1)[1]
-            for name in sdist.getnames()
-            if "/src/pytorial/" in name
-        }
+        members = [name.split("/", 1)[1] for name in sdist.getnames() if "/" in name]
+    prefix = f"{directory}/" if directory else ""
+    return {
+        name.removeprefix(prefix) for name in members if name.startswith(prefix)
+    }
 
 
 def generated_modules():
@@ -216,9 +223,71 @@ def test_wheel_holds_the_modules_and_the_lessons_and_nothing_else():
     assert wheel_names() == generated_modules() | lessons()
 
 
-def test_sdist_holds_what_the_wheel_holds_plus_the_literate_sources():
+def test_sdist_holds_what_the_wheel_holds_plus_what_builds_it():
     assert literate_sources()
-    assert sdist_names() == generated_modules() | lessons() | literate_sources()
+    assert sdist_names() == (
+        generated_modules()
+        | lessons()
+        | literate_sources()
+        | {"Makefile", "tutorials/Makefile"}
+    )
+@
+
+The rest of the build system lives outside the package.  For our own
+directories we name what the [[Makefile]]s need.  For the submodule we do
+not keep a second list: the expectation is whatever that repository
+tracks, leaving out its hidden housekeeping files such as its CI
+configuration.  Asking git matters, because that directory also collects
+ignored build products which Poetry, seeing only this repository's ignore
+rules, would happily ship.  The question can only be asked in a checkout
+with the submodule present, so elsewhere (in an unpacked source
+distribution, for one) that test skips.
+
+<<packaging test functions>>=
+def test_sdist_holds_the_makefiles_and_the_documentation_inputs():
+    assert {"Makefile", "tests/Makefile"} <= sdist_names("")
+    assert sdist_names("tests") == {"Makefile"}
+    assert sdist_names("doc") == {
+        "Makefile",
+        "abstract.tex",
+        "preamble.tex",
+        "pytorial.nw",
+    }
+
+
+def tracked_by_the_makefiles_submodule():
+    import subprocess
+
+    submodule = REPOSITORY / "makefiles"
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(submodule), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if pathlib.Path(top).resolve() != submodule.resolve():
+            raise FileNotFoundError(top)
+        listing = subprocess.run(
+            ["git", "-C", str(submodule), "ls-files"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("the makefiles submodule is not a git checkout here")
+    return {name for name in listing.splitlines() if not name.startswith(".")}
+
+
+def test_sdist_holds_exactly_the_tracked_files_of_the_makefiles_submodule():
+    tracked = tracked_by_the_makefiles_submodule()
+
+    assert {"noweb.mk", "tex.mk", "subdir.mk", "portability.mk"} <= tracked
+    assert sdist_names("makefiles") == tracked
+
+
+def test_wheel_holds_none_of_the_build_system():
+    assert not any("Makefile" in name or name.endswith(".mk") for name in wheel_names())
 @
 
 
