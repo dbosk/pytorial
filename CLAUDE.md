@@ -72,7 +72,12 @@ The package surface is intentionally narrow and re-exported from
   `latest_run` take an optional explicit workspace; the store never reads
   the process cwd itself.
 - `shell.py` — `run_interactive_shell` / `run_scripted_shell`. PTY-backed
-  step execution; this is what makes the tutorials "interactive". POSIX
+  step execution; this is what makes the tutorials "interactive". The
+  interactive shell's PTY takes the window size of the real terminal
+  (`copy_window_size` before bash starts, `following_window_size` relays
+  `SIGWINCH` during the relay); the scripted shell stays unsized (`0 0`,
+  which programs read as 80 columns) so its transcripts are reproducible.
+  POSIX
   terminal modules are imported at use sites. `posix_terminal_available()`
   answers "can shell steps run here?" with `importlib.util.find_spec`, i.e.
   without importing `pty`/`termios` (it runs on every host invocation via
