@@ -18,8 +18,9 @@ then introduce the editor backend, then the three question
 [[kind]]s, then [[check_command]], and only then do we exercise the
 result by running it.  Only once the learner has watched a run use a
 sandbox do we vary where the tutorial runs at all, before closing with
-[[develop]] and a final inspection.  Each cluster generalises the
-previous one without invalidating it.
+[[develop]], a final inspection, and the [[install]] verb that publishes
+the finished file into the learner's own catalog.  Each cluster
+generalises the previous one without invalidating it.
 
 \section{Tutorial source}
 
@@ -72,6 +73,8 @@ summary: Create a tutorial file, add shell, editor, and question steps, and load
 <<develop step>>
 
 <<inspect finished step>>
+
+<<install finished tutorial step>>
 @
 
 \section{Step 1: Create a tutorial directory}
@@ -967,4 +970,51 @@ At this point you have checked the same tutorial in four different ways:
   shows the standalone trust gate refusing untrusted hook code
 - `cat my-tutorials/greeting.md` lets you inspect the final shell, editor,
   hook, shell-check, and question metadata directly
+@
+
+\section{Step 20: Install the finished tutorial}
+
+Until now every command that loaded [[greeting.md]] needed
+[[--tutorial-path my-tutorials]].  [[install]] is what removes that
+flag: it copies the file into the user's installed tutorial directory,
+which the standalone catalog reads after the built-ins.  The verb lives
+in this lesson, not in [[using-tutorials]], for two reasons.  Authors
+are the people who have a file to install, and a host that embeds the
+CLI hides [[install]] altogether, so the universal lesson must not
+mention it, whereas [[writing-tutorials]] is only ever mounted by the
+standalone CLI, where the verb always exists.
+
+[[install]] is also the one verb a linear tutorial cannot exercise for
+real: running it would leave a toy [[greeting]] tutorial in the
+learner's catalog long after the lesson is over.  The compromise is a
+[[kind: input]] question, so the learner types the command without it
+being run.  The answer regex keeps the chapter's invariant target,
+[[my-tutorials/greeting.md]], rather than accepting any source, because
+the learner has typed that path since step~2 and the question is about
+the verb, not about inventing a path.  It accepts an optional
+[[--force]] and the same one-token host prefix as the other command
+questions.  This still teaches the verb, the argument shape, and the
+[[--force]] override semantics.
+
+<<install finished tutorial step>>=
+# Install the finished tutorial
+
+```tutorial-step
+kind: input
+answers:
+  - mode: regex
+    pattern: ^(\S+\s+)?(?:tutorial|pytorial)\s+install\s+my-tutorials/greeting\.md(?:\s+--force)?\s*$
+hint: "The install verb takes one positional source --- here, the file you have been writing all along."
+```
+
+Type the command that installs `my-tutorials/greeting.md`.
+
+So far every command needed `--tutorial-path my-tutorials` to find your
+tutorial. The **install** verb copies a tutorial Markdown file, given as
+a local path or a URL, into your installed tutorial directory, so it
+appears in the catalog alongside the built-ins with no extra flag. Add
+`--force` to overwrite an installed tutorial with the same `id`.
+
+This question step only records your answer, so nothing is installed.
+Run the command yourself afterwards if you want to keep `greeting`.
 @

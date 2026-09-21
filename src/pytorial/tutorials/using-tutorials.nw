@@ -2,24 +2,34 @@
 \label{tutorial-using-tutorials}
 
 [[using-tutorials]] is the entry point for a learner picking up the
-package for the first time.  It exercises every user-facing CLI verb
-([[list]], [[run]], [[review]], [[install]]) and every step backend
-(shell, editor, [[input]], [[single_select]], [[multi_select]]) in one
-linear walk-through, so a learner who finishes it has touched the whole
-public surface at least once.
+package for the first time.  It exercises the three CLI verbs a learner
+meets in every setting ([[list]], [[run]], [[review]]) and every step
+backend (shell, editor, [[input]], [[single_select]], [[multi_select]])
+in one linear walk-through, so a learner who finishes it has touched the
+whole learner-facing surface at least once.
+
+It is also the \emph{universal} tutorial: a host application that embeds
+the CLI gets this lesson mounted ahead of its own tutorials, and nothing
+else from the package (see [[embedded_tutorial_paths]]).  That gives the
+lesson one constraint the other built-ins do not have.  It may depend
+only on what every catalog is guaranteed to contain, which is
+[[using-tutorials]] itself, and only on verbs every host exposes.  So it
+names no other tutorial, and it leaves out [[install]], which hosts hide
+because they do not read the user's installed tutorial directory;
+[[writing-tutorials]] teaches that verb instead, to the authors who need
+it.  An earlier version broke both rules, and no learner in a host could
+get past its first step.
 
 The internal arc is roughly:
 \begin{enumerate}
-\item discover what is installed (steps 1--3 cover [[list]] and [[run]]
+\item discover what is available (steps 1--3 cover [[list]] and [[run]]
   with shell steps),
 \item author content into the workspace (step 4 introduces the editor
   backend),
 \item answer questions of increasing structure (steps 5--7 cover the
-  three [[kind]] values),
+  three [[kind]] values), and
 \item inspect what was recorded (steps 8--9 cover [[review]] with and
-  without [[--step]]), and
-\item meet the one verb we have not exercised yet (step 10 covers
-  [[install]] as a question rather than as a real install).
+  without [[--step]]).
 \end{enumerate}
 This shape is variation theory's separation pattern at the tutorial
 level: the workflow stays invariant across the steps, while one aspect
@@ -40,7 +50,7 @@ summary: Learn how list, run, question prompts, and review fit together.
 
 <<list step>>
 
-<<start another tutorial step>>
+<<run help step>>
 
 <<retry shell step>>
 
@@ -55,19 +65,22 @@ summary: Learn how list, run, question prompts, and review fit together.
 <<review run step>>
 
 <<review one step step>>
-
-<<install step>>
 @
 
 \section{Step 1: List the available tutorials}
 
 We open with [[tutorial list]] because it is the only command a learner
 can run before anything else exists --- it has no required arguments
-and produces output even on a fresh install.  The required patterns
-include the names of all three built-ins; this turns the validator into
-a discoverability check (\enquote{did the listing actually find every
-shipped tutorial?}) rather than just an output presence check.  The
-prose mentions that the same command emits a TSV when its stdout is not
+and produces output even on a fresh install.  Besides the typed command,
+the required patterns name exactly one tutorial: [[using-tutorials]].
+That id is the only one present in every catalog, standalone or
+embedded, and it is present by construction, since the learner is
+running it.  Requiring it still makes the validator check the listing's
+\emph{content} rather than the mere presence of output.  Requiring the
+other built-ins as well, as this step once did, checks more in the
+standalone CLI but can never pass in a host, where they are not mounted.
+
+The prose mentions that the same command emits a TSV when its stdout is not
 a terminal: this is the only place in the tutorial corpus where that
 detail surfaces, and it matters for users who script around the CLI.
 
@@ -79,9 +92,7 @@ required_patterns:
   - mode: regex
     pattern: (?:^|\s)(?:tutorial|pytorial)\s+list\b
   - using-tutorials
-  - shell-basics
-  - writing-tutorials
-hint: "One verb prints the catalog of installed tutorials --- its name says what it does."
+hint: "One verb prints the catalog of available tutorials --- its name says what it does."
 ```
 
 Use the **list** verb.
@@ -93,77 +104,86 @@ Its main job is to show which tutorials are available and how much
 progress is already saved for each one.
 @
 
-\section{Step 2: Start another tutorial}
+\section{Step 2: Read the help for run}
 
-This step demonstrates the runner running \emph{another} tutorial from
-inside the current one.  Two design decisions show up in the metadata:
+Step~1 showed what can be run; this step introduces the verb that runs
+it, together with its one flag a learner needs early: [[--restart]].
+The learner meets both by asking [[run]] for its own help.
+
+The obvious alternative is to have the learner start a second tutorial
+from inside this one, and an earlier version did exactly that with
+[[shell-basics]].  It cannot survive the host-agnostic constraint: a
+host mounts only this lesson plus its own tutorials, so there is no
+second tutorial we can name.  Pointing the learner at [[using-tutorials]]
+itself does not work either.  Without [[--restart]] the nested [[run]]
+would resume the very step that launched it.  With [[--restart]] it
+starts a \emph{new} run of this tutorial, which becomes the latest one;
+the [[review]] in step~8 reads the latest run, so it would find a nearly
+empty record instead of the steps the learner has completed, and a later
+resume would pick the wrong run too.  Reading the help has none of these
+hazards, because it starts nothing.
 
 \begin{description}
-\item[The [[--restart]] flag] is mandatory here so the step is
-  idempotent.  Without it, re-running the lesson after completing
-  [[shell-basics]] once would resume the saved progress and not show
-  the unfinished-step output the learner is meant to see.  We also
-  document that [[--restart]] discards \emph{all} saved transcripts
-  for the target tutorial, not just one step --- a non-obvious detail
-  worth surfacing before a learner uses it casually.
-\item[The required pattern [[shell-basics $]] ] anchors on the nested
-  shell prompt.  Each tutorial relabels its prompt with its own
-  [[id]], which is how a learner can tell which tutorial owns the
-  current shell.  Validating against the labelled prompt is more
-  reliable than validating against shell output, because the prompt
-  is emitted before any command runs.
+\item[The typed-command pattern] allows a leading host name, so
+  [[canvaslms tutorial run --help]] validates as well as the bare
+  standalone spelling.
+\item[The literal [[--restart]] ] can only come from the help output,
+  since the instructions never ask the learner to type it.  Both
+  frontends print it verbatim: Typer in its option table and
+  [[argparse]] in its usage line, and the transcript matcher already
+  strips the styling around it.
 \end{description}
 
-The third pattern (\enquote{Step not complete yet: \ldots}) confirms
-that the learner exited the nested shell early on purpose.  The
-instructions explicitly tell them to do this: leaving a step in a
-deliberately failing state lets the next step demonstrate the retry
-workflow.
+The instructions say precisely what [[--restart]] does to saved work:
+it begins a new run and leaves earlier runs in place, reachable through
+[[review --run-id]].  This lesson used to claim that the flag discards
+every saved transcript, which is false and would have made a careful
+learner afraid of a harmless flag.
 
-<<start another tutorial step>>=
-# Start another tutorial
+<<run help step>>=
+# Read the help for run
 
 ```tutorial-step
 required_patterns:
   - mode: regex
-    pattern: (?:^|\s)(?:tutorial|pytorial)\s+run\s+--restart\s+shell-basics\b
-  - "shell-basics $"
-  - "Step not complete yet: Inspect the workspace"
-hint: "Start `shell-basics` from scratch (one flag forces a clean run), then leave its first shell without doing what it asks."
+    pattern: (?:^|\s)(?:tutorial|pytorial)\s+run\s+--help\b
+  - "--restart"
+hint: "Every verb describes itself when you add `--help`. Ask the verb that starts tutorials."
 ```
 
-Use the **run** verb with `--restart` to start `shell-basics`.
+Use the **run** verb with `--help`, and find the `--restart` flag in
+what it prints.
 
-The **run** verb starts or resumes saved work. We use `--restart`
-here so this step behaves the same way even if you have already
-finished `shell-basics` before. `--restart` discards every saved
-transcript for that tutorial, not just the step you are about to
-revisit.
+The **run** verb starts a tutorial, or resumes it at the first
+unfinished step if you have saved progress. That is how you got here.
 
-Because this lesson is already running, the nested shell prompt changes to
-`shell-basics $ ` so you can tell which tutorial owns the current shell.
+`--restart` begins a fresh run from step 1 instead of resuming. Your
+earlier runs are kept, not deleted: the **review** verb can still show
+them, as you will see later in this lesson.
 
-For this step:
-
-1. Start `shell-basics` with the **run** verb and the `--restart` flag.
-2. When the nested shell opens, type `exit`.
-3. After the nested command reports that the step is not complete yet,
-   exit this outer shell too.
+Every verb answers `--help` the same way, so this is also how you look
+up anything this lesson does not cover.
 @
 
 \section{Step 3: Retry a shell step}
 
-Step~2 left [[shell-basics]] in a failing state on purpose so this step
-can introduce \enquote{try again}.  The pedagogical move is two-pass:
+The first two steps can hardly fail, so this one makes failing part of
+the exercise in order to introduce \enquote{try again}.  The pedagogical
+move is two-pass:
 the learner runs only [[pwd]], fails, then runs both [[pwd]] and [[ls]]
 on the second attempt.  Validating only the second attempt
 ([[required_patterns]] lists both commands) demonstrates the
 \enquote{only the latest recorded attempt counts} rule without
 spelling it out as a separate concept --- the learner experiences it
-directly.  Anchoring on the [[using-tutorials \$]] prompt also
-contrasts with step~2's [[shell-basics \$]] anchor, so the two
-prompts together make the prompt-relabelling rule generalise rather
-than appear once.
+directly.
+
+Anchoring on the [[using-tutorials $]] prompt checks that the commands
+were typed in this tutorial's own shell.  It is also where the lesson
+now teaches prompt relabelling.  That rule used to emerge from a
+contrast with a nested [[shell-basics $]] prompt in step~2; with the
+nested run gone the contrast is gone too, so the instructions state the
+rule outright.  A learner who later runs a host's tutorial sees the
+other prompt there and can complete the generalisation themselves.
 
 <<retry shell step>>=
 # Retry a shell step
@@ -176,7 +196,9 @@ required_patterns:
 hint: "Two passes: feel the not-complete message after a partial attempt, then take the runner's retry offer and finish every command the step requires."
 ```
 
-Now return to this tutorial's own shell.
+Look at the prompt of this shell: `using-tutorials $ `. Every tutorial
+labels its shell with its own id, so you can always tell which tutorial
+owns the shell you are typing in.
 
 To feel how step validation works, try this step in two rounds:
 
@@ -288,13 +310,15 @@ number or with the full option text.
 \section{Step 7: Pick every read-only tutorial command}
 
 [[multi_select]] generalises [[single_select]] to multiple correct
-options.  We deliberately include [[tutorial install]] as the
-distractor: a learner who has not internalised \enquote{which commands
-read versus write?} might pick it because it shares the [[tutorial]]
-prefix.  The framing question (\enquote{commands that only read}) is
-the conceptual axis the step is testing, and the [[hint]] re-states
-the axis explicitly because the option labels alone do not signal
-read-versus-write semantics.
+options.  The distractors are [[run]] and [[run --restart]].  The second
+one earns its place by reusing the flag from step~2: a learner who read
+there that a restart \emph{keeps} earlier runs may conclude it changes
+nothing, and the question corrects that, since it still starts a run.
+It also has to be something every host offers; the distractor used to be
+[[install]], which a learner in a host has never seen.  The framing
+question (\enquote{commands that only read}) is the conceptual axis the
+step is testing, and the [[hint]] re-states the axis explicitly because
+the option labels alone do not signal read-versus-write semantics.
 
 <<multi select step>>=
 # Pick every read-only tutorial command
@@ -304,16 +328,16 @@ kind: multi_select
 options:
   - list
   - run
+  - run --restart
   - review
-  - install
 answers:
   - list
   - review
-hint: "Pick the verbs that only read --- they neither start a run nor mutate what is installed."
+hint: "Pick the verbs that only read --- a run started afresh is still a run."
 ```
 
-Choose every verb here that reads existing information without
-starting a run or installing anything.
+Choose every option here that reads existing information without
+starting a run.
 
 Multi-select questions also use literal option text. The learner may pick
 the correct options in any order, but the tutorial still stores the
@@ -394,38 +418,4 @@ Use the **review** verb with `--step 1`.
 run. Review normally shows the latest saved run for that tutorial; use
 `--run-id <id>` to pick an older one instead. The help for **review**
 shows the full form.
-@
-
-\section{Step 10: Install a tutorial from a file or URL}
-
-[[install]] is the only verb a linear tutorial cannot exercise for
-real --- running it would mutate the user's installed tutorial
-directory and pollute later [[tutorial list]] output, including
-output the same tutorial validates against.  The compromise is to
-make the step a [[kind: input]] question whose regex accepts either
-the standalone names or a one-token host prefix, followed by
-[[install <source>]] with optional [[--force]].  The learner types
-the command shape without it being run.  This still teaches the verb,
-the argument shape, and the [[--force]] override semantics, while
-keeping the rest of the tutorial reproducible.
-
-<<install step>>=
-# Install a tutorial from a file or URL
-
-```tutorial-step
-kind: input
-answers:
-  - mode: regex
-    pattern: ^(\S+\s+)?(?:tutorial|pytorial)\s+install\s+\S+(?:\s+--force)?\s*$
-hint: "The install verb takes one positional source --- local path or URL --- with an optional override flag."
-```
-
-Type an install invocation such as `install ./lesson.md` or
-`install <URL> --force`.
-
-The **install** verb copies a tutorial Markdown file into your
-installed tutorial directory so it appears in the catalog alongside the
-built-ins. Add `--force` to overwrite an installed tutorial with the
-same `id`. This question step only records your answer, so you can
-practice the command safely without installing anything.
 @

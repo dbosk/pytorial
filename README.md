@@ -184,7 +184,9 @@ argparse application via `add_typer_subcommand` and
 `add_argparse_subcommand` in `src/pytorial/cli.py`. Embedded hosts
 prepend the `using-tutorials` lesson before host-specific tutorials, do
 not load the user's installed tutorial directory, and hide the
-standalone-only `install` command.
+standalone-only `install` command. `using-tutorials` is self-contained
+for that reason: it refers to no other tutorial and to no verb a host
+hides, so a learner can finish it whatever else the host mounts.
 
 ## Platform support
 

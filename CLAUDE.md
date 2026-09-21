@@ -135,6 +135,15 @@ when the reader passes `--allow-shell`. Use YAML `|` (not `>`) for
 multi-line shell so newlines survive into one bash process.
 
 Built-in tutorials: `using-tutorials`, `shell-basics`, `writing-tutorials`.
+`using-tutorials` is the universal lesson that embedded hosts mount
+alone, so it must stay self-contained: it may name no other tutorial id
+and no standalone-only verb (`install` is taught at the end of
+`writing-tutorials` instead), and it must never run or restart itself
+from a step (a nested `--restart` becomes the latest run and breaks its
+own `review` steps). `test_universal_tutorial_depends_on_nothing_a_host_lacks`
+(`catalog.nw`) and
+`test_universal_tutorial_first_step_passes_on_an_embedded_listing`
+(`cli.nw`) enforce the first part.
 Repo-local example: `tutorials/shell-basics.md`.
 
 ## Conventions

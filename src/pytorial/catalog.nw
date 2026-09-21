@@ -27,6 +27,7 @@ small, typed model that the rest of the package can trust.
 """Tests for the tutorial catalog."""
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -307,6 +308,33 @@ def test_builtin_tutorial_paths_keep_expected_learning_order():
 def test_builtin_tutorial_paths_exist_on_disk():
     for path in builtin_tutorial_paths():
         assert path.is_file()
+@
+
+Being universal is a promise about the lesson's \emph{content}, not only
+about its path.  A host mounts [[universal_tutorial_path]] and none of
+the other built-ins, and it hides the standalone-only [[install]] verb,
+so a universal lesson that asks the learner to list, run or install
+anything beyond itself cannot be completed there.  That is easy to break
+by accident, because the lesson works perfectly in the standalone CLI,
+which is where its author tries it.  We therefore check the tangled
+lesson text itself.  Deriving the forbidden ids from
+[[BUILTIN_TUTORIAL_FILES]] means a fourth built-in is covered the day it
+is added.  The word boundary around [[install]] leaves ordinary words
+such as \enquote{installed} alone.
+
+<<test functions>>=
+def test_universal_tutorial_depends_on_nothing_a_host_lacks():
+    text = universal_tutorial_path().read_text()
+    other_builtin_ids = [
+        Path(name).stem
+        for name in BUILTIN_TUTORIAL_FILES
+        if name != UNIVERSAL_TUTORIAL_FILE
+    ]
+
+    assert other_builtin_ids
+    for tutorial_id in other_builtin_ids:
+        assert tutorial_id not in text
+    assert re.search(r"\binstall\b", text) is None
 @
 
 Let's verify that a single file and a directory can be mixed in one
